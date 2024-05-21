@@ -3,6 +3,9 @@ use std::sync::OnceLock;
 use ash::{khr, vk};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
+mod device;
+pub use device::{Device, PhysicalDevice};
+
 mod instance;
 pub use instance::instance;
 
