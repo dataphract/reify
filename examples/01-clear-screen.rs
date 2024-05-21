@@ -43,5 +43,7 @@ fn main() {
 
     let mut app = App::default();
 
+    let _instance = reify2::instance();
+
     event_loop.run_app(&mut app).unwrap();
 }

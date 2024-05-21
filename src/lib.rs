@@ -1,14 +1,10 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+use std::sync::OnceLock;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod instance;
+pub use instance::instance;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
+
+pub fn entry() -> &'static ash::Entry {
+    ENTRY.get_or_init(|| unsafe { ash::Entry::load().expect("Vulkan loading failed") })
 }
