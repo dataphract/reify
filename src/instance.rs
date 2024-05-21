@@ -227,6 +227,10 @@ unsafe fn format_debug_utils_label_ext<F>(
 where
     F: fmt::Write,
 {
+    if labels.is_null() {
+        return Ok(());
+    }
+
     let labels = unsafe { std::slice::from_raw_parts(labels, count) };
 
     let (last, init) = match labels.split_last() {
@@ -267,6 +271,10 @@ unsafe fn format_debug_utils_object_name_info_ext<F>(
 where
     F: fmt::Write,
 {
+    if infos.is_null() {
+        return Ok(());
+    }
+
     let infos = unsafe { std::slice::from_raw_parts(infos, count) };
 
     let (last, init) = match infos.split_last() {
@@ -328,6 +336,10 @@ fn debug_utils_messenger_callback_impl(
     callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _user_data: *mut std::ffi::c_void,
 ) -> fmt::Result {
+    if callback_data.is_null() {
+        return Ok(());
+    }
+
     let callback_data = unsafe { *callback_data };
 
     let severity = match severity {
@@ -419,6 +431,13 @@ impl DebugMessenger {
 
         let messenger = unsafe { utils.create_debug_utils_messenger(&debug_ext_info, None) }
             .expect("failed to create debug messenger");
+
+        utils.submit_debug_utils_message(
+            vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL,
+            &vk::DebugUtilsMessengerCallbackDataEXT::default()
+                .message(c"DebugMessenger initialized"),
+        );
 
         DebugMessenger {
             _messenger: messenger,

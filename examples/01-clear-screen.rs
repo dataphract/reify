@@ -3,33 +3,6 @@ use winit::{
     event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11, window::Window,
 };
 
-#[derive(Default)]
-struct App {
-    window: Option<Window>,
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let attr = Window::default_attributes()
-            .with_title("reify2")
-            .with_inner_size(LogicalSize::new(1600, 900));
-        self.window = Some(event_loop.create_window(attr).unwrap());
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => self.window.as_ref().unwrap().request_redraw(),
-            _ => (),
-        }
-    }
-}
-
 fn main() {
     pretty_env_logger::init();
 
@@ -46,4 +19,37 @@ fn main() {
     let _instance = reify2::instance();
 
     event_loop.run_app(&mut app).unwrap();
+}
+
+#[derive(Default)]
+struct App {
+    window: Option<Window>,
+    surface: Option<ash::vk::SurfaceKHR>,
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let attr = Window::default_attributes()
+            .with_title("reify2")
+            .with_inner_size(LogicalSize::new(1600, 900));
+
+        let window = event_loop.create_window(attr).unwrap();
+        let surface = reify2::create_surface(&window);
+
+        self.window = Some(window);
+        self.surface = Some(surface);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::RedrawRequested => self.window.as_ref().unwrap().request_redraw(),
+            _ => (),
+        }
+    }
 }

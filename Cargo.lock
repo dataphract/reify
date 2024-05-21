@@ -946,6 +946,7 @@ dependencies = [
  "bytemuck",
  "gpu-allocator",
  "pretty_env_logger",
+ "raw-window-handle",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
