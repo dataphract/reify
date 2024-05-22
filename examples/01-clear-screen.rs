@@ -21,7 +21,7 @@ fn main() {
     let mut app = App {
         device,
         window: None,
-        surface: None,
+        display: None,
     };
 
     event_loop.run_app(&mut app).unwrap();
@@ -31,7 +31,7 @@ struct App {
     device: reify2::Device,
 
     window: Option<Window>,
-    surface: Option<ash::vk::SurfaceKHR>,
+    display: Option<reify2::Display>,
 }
 
 impl ApplicationHandler for App {
@@ -49,10 +49,10 @@ impl ApplicationHandler for App {
             height: inner_size.height,
         };
 
-        let _display = unsafe { reify2::Display::create(&self.device, surface, extent) };
+        let display = unsafe { reify2::Display::create(&self.device, surface, extent) };
 
         self.window = Some(window);
-        self.surface = Some(surface);
+        self.display = Some(display);
     }
 
     fn window_event(
@@ -63,7 +63,17 @@ impl ApplicationHandler for App {
     ) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => self.window.as_ref().unwrap().request_redraw(),
+
+            WindowEvent::RedrawRequested => {
+                let cx = self
+                    .display
+                    .as_mut()
+                    .unwrap()
+                    .acquire_frame_context(&self.device);
+
+                cx.submit_and_present(&self.device);
+                self.window.as_ref().unwrap().request_redraw();
+            }
             _ => (),
         }
     }

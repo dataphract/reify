@@ -3,15 +3,18 @@ use std::{cmp, marker::PhantomData};
 use ash::vk;
 use tracing_log::log;
 
-use crate::Device;
+use crate::{
+    frame::{FrameContext, FrameResources},
+    Device,
+};
 
-const _MAX_FRAMES_IN_FLIGHT: usize = 2;
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 /// A swapchain image, along with the resources used to render to it.
 pub struct SwapchainImage {
-    pub(crate) _index: u32,
+    pub(crate) index: u32,
     pub(crate) _view: vk::ImageView,
-    pub(crate) _image: vk::Image,
+    pub(crate) image: vk::Image,
 
     unsync: PhantomUnSync,
     unsend: PhantomUnSend,
@@ -24,15 +27,15 @@ pub struct DisplayInfo {
 }
 
 pub struct Display {
-    _info: DisplayInfo,
+    info: DisplayInfo,
 
-    _current_frame: u64,
+    current_frame: usize,
 
-    //frames: Vec<FrameContextState>,
-    _images: Vec<SwapchainImage>,
+    frames: Vec<FrameResources>,
+    images: Vec<SwapchainImage>,
     _image_frames: Vec<Option<usize>>,
 
-    _swapchain: Option<vk::SwapchainKHR>,
+    swapchain: Option<vk::SwapchainKHR>,
     _surface: Option<vk::SurfaceKHR>,
 }
 
@@ -45,7 +48,7 @@ impl Display {
     ) -> Display {
         let instance = crate::instance();
 
-        let (surf_caps, surf_formats, surf_present_modes) = unsafe {
+        let (surf_caps, surf_formats, _surf_present_modes) = unsafe {
             let phys = device.physical_device().raw();
 
             let surface_supported = instance
@@ -114,15 +117,10 @@ impl Display {
             surf_caps.current_extent
         };
 
-        let present_mode = if surf_present_modes
-            .iter()
-            .any(|&pm| pm == vk::PresentModeKHR::MAILBOX)
-        {
-            vk::PresentModeKHR::MAILBOX
-        } else {
-            // Implementations are required to support FIFO.
-            vk::PresentModeKHR::FIFO
-        };
+        // TODO(dp): make configurable
+        //
+        // Implementations are required to support FIFO.
+        let present_mode = vk::PresentModeKHR::FIFO;
 
         let create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface)
@@ -182,9 +180,9 @@ impl Display {
             .enumerate()
             .zip(image_views)
             .map(|((index, image), view)| SwapchainImage {
-                _index: index as u32,
+                index: index as u32,
                 _view: view,
-                _image: image,
+                image,
                 unsend: PhantomData,
                 unsync: PhantomData,
             })
@@ -197,25 +195,55 @@ impl Display {
             present_mode,
         };
 
-        // TODO
-        // let mut frames = Vec::new();
-        // for _ in 0..MAX_FRAMES_IN_FLIGHT {
-        //     frames.push(FrameContextState::create(device));
-        // }
+        let mut frames = Vec::new();
+        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            frames.push(FrameResources::create(device));
+        }
 
         let mut image_frames = Vec::with_capacity(swapchain_images.len());
         image_frames.resize(swapchain_images.len(), None);
 
         Display {
-            _info: info,
-            _current_frame: 0,
-            // frames,
-            _images: swapchain_images,
+            info,
+            current_frame: 0,
+            frames,
+            images: swapchain_images,
             _image_frames: image_frames,
-            _swapchain: Some(swapchain),
+            swapchain: Some(swapchain),
             _surface: Some(surface),
             // context: context.clone(),
         }
+    }
+
+    pub fn acquire_frame_context<'frame>(
+        &'frame mut self,
+        device: &Device,
+    ) -> FrameContext<'frame> {
+        let frame_idx = self.current_frame % MAX_FRAMES_IN_FLIGHT;
+        let frame = &mut self.frames[frame_idx];
+
+        let frame_cx = frame.acquire_context(device, None).unwrap();
+
+        let acquire_info = vk::AcquireNextImageInfoKHR::default()
+            .swapchain(self.swapchain.unwrap())
+            .timeout(u64::MAX)
+            .semaphore(frame_cx.image_available())
+            .fence(vk::Fence::null())
+            .device_mask(1);
+
+        let (acquired, is_suboptimal) = unsafe { device.acquire_next_image_2(&acquire_info) }
+            .expect("failed to acquire next swapchain image");
+
+        if is_suboptimal {
+            log::warn!("swapchain image is suboptimal");
+        }
+
+        frame_cx.attach(
+            device,
+            &self.info,
+            self.swapchain.unwrap(),
+            &mut self.images[acquired as usize],
+        )
     }
 }
 

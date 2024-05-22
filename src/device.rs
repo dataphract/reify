@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{
+    ffi::{c_char, CStr},
+    sync::{Arc, Mutex},
+};
 
-use ash::{khr, prelude::*, vk};
+use ash::{ext, khr, prelude::*, vk};
 use tracing_log::log;
-
-use crate::instance::LAYER_NAME_VALIDATION;
 
 // Graphics, compute, transfer, present
 const _MAX_DEVICE_QUEUES: usize = 4;
@@ -85,15 +86,22 @@ impl PhysicalDevice {
         // Verify that all necessary device layers are supported.
         //
         // TODO(dp): this is quadratic in the number of layer names
-        let required_layer_names = [LAYER_NAME_VALIDATION];
-        for layer in required_layer_names {
+        let required_layer_names: Vec<&CStr> = vec![
+            #[cfg(debug_assertions)]
+            {
+                use crate::instance::LAYER_NAME_VALIDATION;
+                LAYER_NAME_VALIDATION
+            },
+        ];
+        for &layer in required_layer_names.iter() {
             assert!(self
                 .inner
                 .device_layers
                 .iter()
                 .any(|l| l.layer_name_as_c_str().unwrap() == layer));
         }
-        let enabled_layer_names = required_layer_names.map(|c| c.as_ptr());
+        let enabled_layer_names: Vec<*const c_char> =
+            required_layer_names.iter().map(|c| c.as_ptr()).collect();
 
         // Verify that all necessary device extensions are supported.
         //
@@ -144,14 +152,19 @@ impl PhysicalDevice {
 
         log::info!("Created logical device.");
 
+        let queue = unsafe { device.get_device_queue(qf_index, 0) };
+
         let khr_swapchain = khr::swapchain::Device::new(crate::instance().instance(), &device);
+        let ext_debug_utils = ext::debug_utils::Device::new(crate::instance().instance(), &device);
 
         Device {
             inner: Arc::new(DeviceInner {
                 phys_device: self.clone(),
                 qf_index,
+                queue: Mutex::new(queue),
                 raw: device,
                 khr_swapchain,
+                ext_debug_utils,
             }),
         }
     }
@@ -172,8 +185,13 @@ struct DeviceInner {
     // Currently, a single queue is used for all operations.
     qf_index: u32,
 
+    // TODO(dp): vk::Queue is Copy, so this can be trivially copied out of the Mutex. Wrap it in
+    // something safer.
+    queue: Mutex<vk::Queue>,
+
     raw: ash::Device,
     khr_swapchain: khr::swapchain::Device,
+    ext_debug_utils: ext::debug_utils::Device,
 }
 
 impl Device {
@@ -184,6 +202,18 @@ impl Device {
     // TODO(dp): remove this method when dedicated queues are supported
     pub fn queue_family_index(&self) -> u32 {
         self.inner.qf_index
+    }
+
+    pub fn queue(&self) -> Queue {
+        Queue { device: self }
+    }
+
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn acquire_next_image_2(
+        &self,
+        acquire_info: &vk::AcquireNextImageInfoKHR,
+    ) -> VkResult<(u32, bool)> {
+        self.inner.khr_swapchain.acquire_next_image2(acquire_info)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -201,7 +231,124 @@ impl Device {
     ) -> VkResult<Vec<vk::Image>> {
         unsafe { self.inner.khr_swapchain.get_swapchain_images(swapchain) }
     }
-} // NOTE: Only add methods here if there is no external synchronization requirement on the device.
+
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn set_debug_utils_object_name(
+        &self,
+        name_info: &vk::DebugUtilsObjectNameInfoEXT,
+    ) -> VkResult<()> {
+        unsafe {
+            self.inner
+                .ext_debug_utils
+                .set_debug_utils_object_name(name_info)
+        }
+    }
+}
+
+device_delegate! {
+    impl Device {
+        pub unsafe fn allocate_command_buffers(
+            info: &vk::CommandBufferAllocateInfo,
+        ) -> VkResult<Vec<vk::CommandBuffer>>;
+        pub unsafe fn begin_command_buffer(
+            cmdbuf: vk::CommandBuffer,
+            begin_info: &vk::CommandBufferBeginInfo,
+        ) -> VkResult<()>;
+        pub unsafe fn bind_buffer_memory(
+            buffer: vk::Buffer,
+            memory: vk::DeviceMemory,
+            memory_offset: vk::DeviceSize,
+        ) -> VkResult<()>;
+        pub unsafe fn bind_image_memory(
+            image: vk::Image,
+            memory: vk::DeviceMemory,
+            memory_offset: vk::DeviceSize,
+        ) -> VkResult<()>;
+        pub unsafe fn cmd_begin_rendering(
+            cmdbuf: vk::CommandBuffer,
+            info: &vk::RenderingInfo,
+        );
+        pub unsafe fn cmd_begin_render_pass(
+            cmdbuf: vk::CommandBuffer,
+            pass_info: &vk::RenderPassBeginInfo,
+            contents: vk::SubpassContents,
+        );
+        pub unsafe fn cmd_bind_pipeline(
+            cmdbuf: vk::CommandBuffer,
+            bind_point: vk::PipelineBindPoint,
+            pipeline: vk::Pipeline,
+        );
+        pub unsafe fn cmd_bind_vertex_buffers(
+            cmdbuf: vk::CommandBuffer,
+            first_binding: u32,
+            buffers: &[vk::Buffer],
+            offsets: &[u64],
+        );
+        pub unsafe fn cmd_blit_image2(
+            cmdbuf: vk::CommandBuffer,
+            info: &vk::BlitImageInfo2,
+        );
+        pub unsafe fn cmd_copy_buffer2(cmdbuf: vk::CommandBuffer, info: &vk::CopyBufferInfo2);
+        pub unsafe fn cmd_draw(
+            cmdbuf: vk::CommandBuffer,
+            vertex_count: u32,
+            instance_count: u32,
+            first_vertex: u32,
+            first_instance: u32,
+        );
+        pub unsafe fn cmd_end_rendering(cmdbuf: vk::CommandBuffer);
+        pub unsafe fn cmd_end_render_pass(cmdbuf: vk::CommandBuffer);
+        pub unsafe fn cmd_pipeline_barrier(
+            cmdbuf: vk::CommandBuffer,
+            src_stage_mask: vk::PipelineStageFlags,
+            dst_stage_mask: vk::PipelineStageFlags,
+            dependendency_flags: vk::DependencyFlags,
+            memory_barriers: &[vk::MemoryBarrier],
+            buffer_memory_barriers: &[vk::BufferMemoryBarrier],
+            image_memory_barriers: &[vk::ImageMemoryBarrier],
+        );
+        pub unsafe fn cmd_pipeline_barrier2(cmdbuf: vk::CommandBuffer, info: &vk::DependencyInfo);
+        pub unsafe fn cmd_set_scissor(
+            cmdbuf: vk::CommandBuffer,
+            first_scissor: u32,
+            scissors: &[vk::Rect2D],
+        );
+        pub unsafe fn cmd_set_viewport(
+            cmdbuf: vk::CommandBuffer,
+            first_viewport: u32,
+            viewports: &[vk::Viewport],
+        );
+        pub unsafe fn end_command_buffer(cmdbuf: vk::CommandBuffer) -> VkResult<()>;
+        pub unsafe fn get_buffer_memory_requirements(buffer: vk::Buffer) -> vk::MemoryRequirements;
+        pub unsafe fn get_fence_status(fence: vk::Fence) -> VkResult<bool>;
+        pub unsafe fn get_image_memory_requirements(image: vk::Image) -> vk::MemoryRequirements;
+        /// Resets the command pool `pool`.
+        ///
+        /// # Safety
+        ///
+        /// - All command buffers allocated from `pool` must not be in the pending state.
+        pub unsafe fn reset_command_pool(
+            pool: vk::CommandPool,
+            flags: vk::CommandPoolResetFlags,
+        ) -> VkResult<()>;
+        /// Sets the state of each element of `fences` to be unsignaled.
+        ///
+        /// # Safety
+        ///
+        /// - Each element of `fences` must not be currently associated with any queue command that
+        ///   has not yet completed execution on that queue.
+        /// - `fences` must not be empty.
+        pub unsafe fn reset_fences(fences: &[vk::Fence]) -> VkResult<()>;
+        /// Waits for one or more fences to enter the signaled state.
+        ///
+        /// # Safety
+        /// - `fences` must not be empty.
+        pub unsafe fn wait_for_fences(fences: &[vk::Fence], wait_all: bool, timeout: u64) -> VkResult<()>;
+        pub unsafe fn wait_semaphores(info: &vk::SemaphoreWaitInfo, timeout: u64) -> VkResult<()>;
+    }
+}
+
+// NOTE: Only add methods here if there is no external synchronization requirement on the device.
 device_delegate_no_alloc_callbacks! {
     impl Device {
         pub unsafe fn create_buffer(info: &vk::BufferCreateInfo) -> VkResult<vk::Buffer>;
@@ -240,6 +387,45 @@ device_delegate_no_alloc_callbacks! {
         pub unsafe fn destroy_shader_module(module: vk::ShaderModule);
     }
 }
+
+/// Generates methods on `Device` and `DeviceInner` that delegate to `ash::Device`.
+macro_rules! device_delegate {
+    (
+        impl Device {
+            $(
+            $(#[$m:meta])*
+            $v:vis unsafe fn $name:ident(
+                $($param:ident : $param_ty:ty),* $(,)?
+            ) $(-> $ret_ty:ty)?;
+            )*
+        }
+    ) => {
+        impl Device {
+            $(
+                $(#[$m])*
+                #[inline(always)]
+                #[allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
+                $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
+                    // SAFETY: upheld by outer contract.
+                    unsafe { self.inner.$name($($param),*) }
+                }
+            )*
+        }
+
+        impl DeviceInner {
+            $(
+                $(#[$m])*
+                #[inline(always)]
+                #[allow(clippy::too_many_arguments)]
+                $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
+                    // SAFETY: upheld by outer contract.
+                    unsafe { self.raw.$name($($param),*) }
+                }
+            )*
+        }
+    };
+}
+use device_delegate;
 
 /// Generates methods on `Device` that delegate to `ash::Device`, providing
 /// `None` for the allocation callback parameter.
@@ -280,3 +466,44 @@ macro_rules! device_delegate_no_alloc_callbacks {
     };
 }
 use device_delegate_no_alloc_callbacks;
+
+pub struct Queue<'device> {
+    device: &'device Device,
+}
+
+impl<'device> Queue<'device> {
+    pub unsafe fn present(&self, info: &vk::PresentInfoKHR) -> VkResult<bool> {
+        let queue_guard = self.device.inner.queue.lock().unwrap();
+
+        let res = unsafe {
+            self.device
+                .inner
+                .khr_swapchain
+                .queue_present(*queue_guard, info)
+        };
+
+        drop(queue_guard);
+
+        res
+    }
+
+    pub unsafe fn submit2(
+        &self,
+        submits: &[vk::SubmitInfo2],
+        fence: Option<vk::Fence>,
+    ) -> VkResult<()> {
+        let queue_guard = self.device.inner.queue.lock().unwrap();
+
+        let res = unsafe {
+            self.device.inner.raw.queue_submit2(
+                *queue_guard,
+                submits,
+                fence.unwrap_or(vk::Fence::null()),
+            )
+        };
+
+        drop(queue_guard);
+
+        res
+    }
+}

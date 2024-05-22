@@ -12,6 +12,10 @@ pub use display::Display;
 mod instance;
 pub use instance::instance;
 
+mod frame;
+
+mod misc;
+
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 
 pub fn entry() -> &'static ash::Entry {
