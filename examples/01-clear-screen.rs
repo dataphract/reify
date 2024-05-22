@@ -1,3 +1,4 @@
+use ash::vk;
 use winit::{
     application::ApplicationHandler, dpi::LogicalSize, event::WindowEvent,
     event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11, window::Window,
@@ -14,16 +15,21 @@ fn main() {
 
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-    let mut app = App::default();
-
     let phys_device = reify2::PhysicalDevice::new();
-    let _device = phys_device.create_device();
+    let device = phys_device.create_device();
+
+    let mut app = App {
+        device,
+        window: None,
+        surface: None,
+    };
 
     event_loop.run_app(&mut app).unwrap();
 }
 
-#[derive(Default)]
 struct App {
+    device: reify2::Device,
+
     window: Option<Window>,
     surface: Option<ash::vk::SurfaceKHR>,
 }
@@ -36,6 +42,14 @@ impl ApplicationHandler for App {
 
         let window = event_loop.create_window(attr).unwrap();
         let surface = reify2::create_surface(&window);
+
+        let inner_size = window.inner_size();
+        let extent = vk::Extent2D {
+            width: inner_size.width,
+            height: inner_size.height,
+        };
+
+        let _display = unsafe { reify2::Display::create(&self.device, surface, extent) };
 
         self.window = Some(window);
         self.surface = Some(surface);

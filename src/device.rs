@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use ash::{khr, vk};
+use ash::{khr, prelude::*, vk};
 use tracing_log::log;
 
 use crate::instance::LAYER_NAME_VALIDATION;
@@ -144,35 +144,139 @@ impl PhysicalDevice {
 
         log::info!("Created logical device.");
 
+        let khr_swapchain = khr::swapchain::Device::new(crate::instance().instance(), &device);
+
         Device {
-            _inner: Arc::new(DeviceInner {
-                _immut: DeviceImmut {
-                    _phys_device: self.clone(),
-                    _qf_index: qf_index,
-                },
-                _mut_: Mutex::new(DeviceMut { _raw: device }),
+            inner: Arc::new(DeviceInner {
+                phys_device: self.clone(),
+                qf_index,
+                raw: device,
+                khr_swapchain,
             }),
         }
+    }
+
+    pub fn raw(&self) -> vk::PhysicalDevice {
+        self.inner.raw
     }
 }
 
 pub struct Device {
-    _inner: Arc<DeviceInner>,
+    inner: Arc<DeviceInner>,
 }
 
 struct DeviceInner {
-    _immut: DeviceImmut,
-    _mut_: Mutex<DeviceMut>,
-}
-
-struct DeviceImmut {
-    _phys_device: PhysicalDevice,
+    phys_device: PhysicalDevice,
     // Queue family index.
     //
     // Currently, a single queue is used for all operations.
-    _qf_index: u32,
+    qf_index: u32,
+
+    raw: ash::Device,
+    khr_swapchain: khr::swapchain::Device,
 }
 
-struct DeviceMut {
-    _raw: ash::Device,
+impl Device {
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.inner.phys_device
+    }
+
+    // TODO(dp): remove this method when dedicated queues are supported
+    pub fn queue_family_index(&self) -> u32 {
+        self.inner.qf_index
+    }
+
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn create_swapchain(
+        &self,
+        info: &vk::SwapchainCreateInfoKHR,
+    ) -> VkResult<vk::SwapchainKHR> {
+        self.inner.khr_swapchain.create_swapchain(info, None)
+    }
+
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn get_swapchain_images(
+        &self,
+        swapchain: vk::SwapchainKHR,
+    ) -> VkResult<Vec<vk::Image>> {
+        unsafe { self.inner.khr_swapchain.get_swapchain_images(swapchain) }
+    }
+} // NOTE: Only add methods here if there is no external synchronization requirement on the device.
+device_delegate_no_alloc_callbacks! {
+    impl Device {
+        pub unsafe fn create_buffer(info: &vk::BufferCreateInfo) -> VkResult<vk::Buffer>;
+        pub unsafe fn create_command_pool(
+            info: &vk::CommandPoolCreateInfo,
+        ) -> VkResult<vk::CommandPool>;
+        pub unsafe fn create_event(info: &vk::EventCreateInfo) -> VkResult<vk::Event>;
+        pub unsafe fn create_fence(info: &vk::FenceCreateInfo) -> VkResult<vk::Fence>;
+        pub unsafe fn create_framebuffer(
+            info: &vk::FramebufferCreateInfo,
+        ) -> VkResult<vk::Framebuffer>;
+        pub unsafe fn create_graphics_pipelines(
+            cache: vk::PipelineCache,
+            info: &[vk::GraphicsPipelineCreateInfo],
+        ) -> Result<Vec<vk::Pipeline>, (Vec<vk::Pipeline>, vk::Result)>;
+        pub unsafe fn create_image_view(info: &vk::ImageViewCreateInfo) -> VkResult<vk::ImageView>;
+        pub unsafe fn create_image(info: &vk::ImageCreateInfo) -> VkResult<vk::Image>;
+        pub unsafe fn create_pipeline_layout(
+            info: &vk::PipelineLayoutCreateInfo,
+        ) -> VkResult<vk::PipelineLayout>;
+        pub unsafe fn create_render_pass(info: &vk::RenderPassCreateInfo) -> VkResult<vk::RenderPass>;
+        pub unsafe fn create_semaphore(info: &vk::SemaphoreCreateInfo) -> VkResult<vk::Semaphore>;
+        pub unsafe fn create_shader_module(
+            info: &vk::ShaderModuleCreateInfo,
+        ) -> VkResult<vk::ShaderModule>;
+        pub unsafe fn destroy_buffer(buffer: vk::Buffer);
+        pub unsafe fn destroy_command_pool(pool: vk::CommandPool);
+        pub unsafe fn destroy_fence(fence: vk::Fence);
+        pub unsafe fn destroy_framebuffer(framebuffer: vk::Framebuffer);
+        pub unsafe fn destroy_image(image: vk::Image);
+        pub unsafe fn destroy_image_view(view: vk::ImageView);
+        pub unsafe fn destroy_pipeline(pipeline: vk::Pipeline);
+        pub unsafe fn destroy_pipeline_layout(layout: vk::PipelineLayout);
+        pub unsafe fn destroy_render_pass(pass: vk::RenderPass);
+        pub unsafe fn destroy_semaphore(sem: vk::Semaphore);
+        pub unsafe fn destroy_shader_module(module: vk::ShaderModule);
+    }
 }
+
+/// Generates methods on `Device` that delegate to `ash::Device`, providing
+/// `None` for the allocation callback parameter.
+macro_rules! device_delegate_no_alloc_callbacks {
+    (
+        impl Device {
+            $(
+            $(#[$m:meta])*
+            $v:vis unsafe fn $name:ident(
+                $($param:ident : $param_ty:ty),* $(,)?
+            ) $(-> $ret_ty:ty)?;
+            )*
+        }
+    ) => {
+        impl Device {
+            $(
+                $(#[$m])*
+                #[inline(always)]
+                #[allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
+                $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
+                    // SAFETY: upheld by outer contract.
+                    unsafe { self.inner.$name($($param),*) }
+                }
+            )*
+        }
+
+        impl DeviceInner {
+            $(
+                $(#[$m])*
+                #[inline(always)]
+                #[allow(clippy::too_many_arguments)]
+                $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
+                    // SAFETY: upheld by outer contract.
+                    unsafe { self.raw.$name($($param,)* None) }
+                }
+            )*
+        }
+    };
+}
+use device_delegate_no_alloc_callbacks;

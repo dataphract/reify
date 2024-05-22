@@ -6,6 +6,9 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 mod device;
 pub use device::{Device, PhysicalDevice};
 
+mod display;
+pub use display::Display;
+
 mod instance;
 pub use instance::instance;
 
