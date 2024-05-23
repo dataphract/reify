@@ -1,10 +1,17 @@
 use ash::vk;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_tracy::TracyLayer;
 use winit::{
     application::ApplicationHandler, dpi::LogicalSize, event::WindowEvent,
     event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11, window::Window,
 };
 
 fn main() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::Registry::default().with(TracyLayer::default()),
+    )
+    .unwrap();
+
     pretty_env_logger::init();
 
     // TODO handle wayland/x

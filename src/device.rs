@@ -209,6 +209,7 @@ impl Device {
     }
 
     #[allow(clippy::missing_safety_doc)]
+    #[tracing::instrument(skip_all)]
     pub unsafe fn acquire_next_image_2(
         &self,
         acquire_info: &vk::AcquireNextImageInfoKHR,
@@ -343,7 +344,9 @@ device_delegate! {
         ///
         /// # Safety
         /// - `fences` must not be empty.
+        #[tracing::instrument(skip_all)]
         pub unsafe fn wait_for_fences(fences: &[vk::Fence], wait_all: bool, timeout: u64) -> VkResult<()>;
+        #[tracing::instrument(skip_all)]
         pub unsafe fn wait_semaphores(info: &vk::SemaphoreWaitInfo, timeout: u64) -> VkResult<()>;
     }
 }
@@ -472,6 +475,7 @@ pub struct Queue<'device> {
 }
 
 impl<'device> Queue<'device> {
+    #[tracing::instrument(skip_all)]
     pub unsafe fn present(&self, info: &vk::PresentInfoKHR) -> VkResult<bool> {
         let queue_guard = self.device.inner.queue.lock().unwrap();
 
@@ -487,6 +491,7 @@ impl<'device> Queue<'device> {
         res
     }
 
+    #[tracing::instrument(skip_all)]
     pub unsafe fn submit2(
         &self,
         submits: &[vk::SubmitInfo2],
