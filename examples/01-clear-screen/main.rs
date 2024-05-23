@@ -1,68 +1,19 @@
 use ash::vk;
 use naga::front::glsl;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_tracy::TracyLayer;
-use winit::{
-    application::ApplicationHandler, dpi::LogicalSize, event::WindowEvent,
-    event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11, window::Window,
-};
+
+mod app;
 
 fn main() {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::Registry::default().with(TracyLayer::default()),
-    )
-    .unwrap();
-
-    pretty_env_logger::init();
-
-    // TODO handle wayland/x
-    let event_loop = winit::event_loop::EventLoop::builder()
-        .with_x11()
-        .build()
-        .unwrap();
-
-    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-
-    let phys_device = reify2::PhysicalDevice::new();
-    let device = phys_device.create_device();
-
-    let mut app = App {
-        device,
-        window: None,
-        display: None,
-        pipe_layout: None,
-        pipe: None,
-    };
-
-    event_loop.run_app(&mut app).unwrap();
+    app::AppRunner::<ClearScreenApp>::new().run();
 }
 
-struct App {
-    device: reify2::Device,
-
-    window: Option<Window>,
-    display: Option<reify2::Display>,
-    pipe_layout: Option<vk::PipelineLayout>,
-    pipe: Option<vk::Pipeline>,
+struct ClearScreenApp {
+    _pipe_layout: vk::PipelineLayout,
+    _pipe: vk::Pipeline,
 }
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let attr = Window::default_attributes()
-            .with_title("reify2")
-            .with_inner_size(LogicalSize::new(1600, 900));
-
-        let window = event_loop.create_window(attr).unwrap();
-        let surface = reify2::create_surface(&window);
-
-        let inner_size = window.inner_size();
-        let extent = vk::Extent2D {
-            width: inner_size.width,
-            height: inner_size.height,
-        };
-
-        let display = unsafe { reify2::Display::create(&self.device, surface, extent) };
-
+impl app::App for ClearScreenApp {
+    fn create_app(device: &reify2::Device) -> ClearScreenApp {
         let vert_src = r#"
 #version 460 core
 
@@ -94,14 +45,14 @@ void main() {
         );
 
         let vert_module = compile_shader(
-            &self.device,
+            device,
             &mut glsl_front,
             &mut validator,
             naga::ShaderStage::Vertex,
             vert_src,
         );
         let frag_module = compile_shader(
-            &self.device,
+            device,
             &mut glsl_front,
             &mut validator,
             naga::ShaderStage::Fragment,
@@ -211,11 +162,7 @@ void main() {
             .set_layouts(&[])
             .push_constant_ranges(&[]);
 
-        let pipe_layout = unsafe {
-            self.device
-                .create_pipeline_layout(&layout_create_info)
-                .unwrap()
-        };
+        let pipe_layout = unsafe { device.create_pipeline_layout(&layout_create_info).unwrap() };
 
         let create_infos = &[vk::GraphicsPipelineCreateInfo::default()
             .flags(vk::PipelineCreateFlags::empty())
@@ -237,66 +184,44 @@ void main() {
             .push_next(&mut pipeline_rendering_create_info)];
 
         let pipe = unsafe {
-            self.device
+            device
                 .create_graphics_pipelines(vk::PipelineCache::null(), create_infos)
                 .unwrap()[0]
         };
 
-        self.window = Some(window);
-        self.display = Some(display);
-        self.pipe_layout = Some(pipe_layout);
-        self.pipe = Some(pipe);
+        ClearScreenApp {
+            _pipe_layout: pipe_layout,
+            _pipe: pipe,
+        }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+    fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext) {
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(cx.swapchain_image().view())
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.4, 0.5, 1.0, 1.0],
+                },
+            });
+        let color_attachments = &[color_attachment];
 
-            WindowEvent::RedrawRequested => {
-                let cx = self
-                    .display
-                    .as_mut()
-                    .unwrap()
-                    .acquire_frame_context(&self.device);
+        let rendering_info = vk::RenderingInfo::default()
+            .flags(vk::RenderingFlags::empty())
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: cx.display_info().image_extent,
+            })
+            .layer_count(1)
+            .view_mask(0)
+            .color_attachments(color_attachments);
 
-                let color_attachment = vk::RenderingAttachmentInfo::default()
-                    .image_view(cx.swapchain_image().view())
-                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .clear_value(vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [0.4, 0.5, 1.0, 1.0],
-                        },
-                    });
-                let color_attachments = &[color_attachment];
+        unsafe {
+            device.cmd_begin_rendering(cx.command_buffer(), &rendering_info);
 
-                let rendering_info = vk::RenderingInfo::default()
-                    .flags(vk::RenderingFlags::empty())
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: cx.display_info().image_extent,
-                    })
-                    .layer_count(1)
-                    .view_mask(0)
-                    .color_attachments(color_attachments);
-
-                unsafe {
-                    self.device
-                        .cmd_begin_rendering(cx.command_buffer(), &rendering_info);
-
-                    self.device.cmd_end_rendering(cx.command_buffer());
-                }
-
-                cx.submit_and_present(&self.device);
-                self.window.as_ref().unwrap().request_redraw();
-            }
-            _ => (),
+            device.cmd_end_rendering(cx.command_buffer());
         }
     }
 }

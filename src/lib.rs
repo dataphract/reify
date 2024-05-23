@@ -13,6 +13,7 @@ mod instance;
 pub use instance::instance;
 
 mod frame;
+pub use frame::FrameContext;
 
 mod misc;
 

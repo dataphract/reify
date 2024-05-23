@@ -1,0 +1,99 @@
+use ash::vk;
+use tracing_subscriber::layer::SubscriberExt;
+use winit::{
+    event::WindowEvent, event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11,
+    window::Window,
+};
+
+pub trait App {
+    fn create_app(device: &reify2::Device) -> Self;
+    fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext<'_>);
+}
+
+pub struct AppRunner<A> {
+    device: reify2::Device,
+    window: Option<Window>,
+    display: Option<reify2::Display>,
+
+    app: Option<A>,
+}
+
+impl<A: App> AppRunner<A> {
+    pub fn new() -> AppRunner<A> {
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::Registry::default().with(tracing_tracy::TracyLayer::default()),
+        )
+        .unwrap();
+
+        pretty_env_logger::init();
+
+        let phys_device = reify2::PhysicalDevice::new();
+        let device = phys_device.create_device();
+
+        AppRunner {
+            device,
+            window: None,
+            display: None,
+            app: None,
+        }
+    }
+
+    pub fn run(&mut self) {
+        // TODO handle wayland/x
+        let event_loop = winit::event_loop::EventLoop::builder()
+            .with_x11()
+            .build()
+            .unwrap();
+
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        event_loop.run_app(self).unwrap();
+    }
+}
+
+impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let attr = Window::default_attributes()
+            .with_title("reify2")
+            .with_inner_size(winit::dpi::LogicalSize::new(1600, 900));
+
+        let window = event_loop.create_window(attr).unwrap();
+        let surface = reify2::create_surface(&window);
+
+        let inner_size = window.inner_size();
+        let extent = vk::Extent2D {
+            width: inner_size.width,
+            height: inner_size.height,
+        };
+
+        let display = unsafe { reify2::Display::create(&self.device, surface, extent) };
+
+        self.window = Some(window);
+        self.display = Some(display);
+        self.app = Some(A::create_app(&self.device));
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+
+            WindowEvent::RedrawRequested => {
+                let mut cx = self
+                    .display
+                    .as_mut()
+                    .unwrap()
+                    .acquire_frame_context(&self.device);
+
+                self.app.as_ref().unwrap().render(&self.device, &mut cx);
+
+                cx.submit_and_present(&self.device);
+                self.window.as_ref().unwrap().request_redraw();
+            }
+            _ => (),
+        }
+    }
+}
