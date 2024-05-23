@@ -71,6 +71,35 @@ impl ApplicationHandler for App {
                     .unwrap()
                     .acquire_frame_context(&self.device);
 
+                let color_attachment = vk::RenderingAttachmentInfo::default()
+                    .image_view(cx.swapchain_image().view())
+                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(vk::ClearValue {
+                        color: vk::ClearColorValue {
+                            float32: [0.4, 0.5, 1.0, 1.0],
+                        },
+                    });
+                let color_attachments = &[color_attachment];
+
+                let rendering_info = vk::RenderingInfo::default()
+                    .flags(vk::RenderingFlags::empty())
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D { x: 0, y: 0 },
+                        extent: cx.display_info().image_extent,
+                    })
+                    .layer_count(1)
+                    .view_mask(0)
+                    .color_attachments(color_attachments);
+
+                unsafe {
+                    self.device
+                        .cmd_begin_rendering(cx.command_buffer(), &rendering_info);
+
+                    self.device.cmd_end_rendering(cx.command_buffer());
+                }
+
                 cx.submit_and_present(&self.device);
                 self.window.as_ref().unwrap().request_redraw();
             }

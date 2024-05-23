@@ -13,12 +13,19 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 /// A swapchain image, along with the resources used to render to it.
 pub struct SwapchainImage {
     pub(crate) index: u32,
-    pub(crate) _view: vk::ImageView,
+    pub(crate) view: vk::ImageView,
     pub(crate) image: vk::Image,
 
     unsync: PhantomUnSync,
     unsend: PhantomUnSend,
 }
+
+impl SwapchainImage {
+    pub fn view(&self) -> vk::ImageView {
+        self.view
+    }
+}
+
 pub struct DisplayInfo {
     pub min_image_count: u32,
     pub surface_format: vk::SurfaceFormatKHR,
@@ -181,7 +188,7 @@ impl Display {
             .zip(image_views)
             .map(|((index, image), view)| SwapchainImage {
                 index: index as u32,
-                _view: view,
+                view,
                 image,
                 unsend: PhantomData,
                 unsync: PhantomData,

@@ -183,7 +183,7 @@ impl<'frame> AvailableFrameContext<'frame> {
         unsafe { device.cmd_pipeline_barrier2(self.frame.commands, &dependency_info) };
 
         FrameContext {
-            _display_info: display_info,
+            display_info,
             resources: self.frame,
             attached: swapchain_image,
             swapchain,
@@ -192,7 +192,7 @@ impl<'frame> AvailableFrameContext<'frame> {
 }
 
 pub struct FrameContext<'frame> {
-    _display_info: &'frame DisplayInfo,
+    display_info: &'frame DisplayInfo,
     resources: &'frame mut FrameResources,
     attached: &'frame mut SwapchainImage,
     swapchain: vk::SwapchainKHR,
@@ -280,5 +280,18 @@ impl<'frame> FrameContext<'frame> {
                 .present(&present_info)
                 .expect("failed to present swapchain image");
         }
+    }
+
+    pub fn display_info(&self) -> &DisplayInfo {
+        self.display_info
+    }
+
+    pub fn swapchain_image(&self) -> &SwapchainImage {
+        &*self.attached
+    }
+
+    // TODO: shouldn't be a public API.
+    pub fn command_buffer(&self) -> vk::CommandBuffer {
+        self.resources.commands
     }
 }
