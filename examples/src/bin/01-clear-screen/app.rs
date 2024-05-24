@@ -6,7 +6,7 @@ use winit::{
 };
 
 pub trait App {
-    fn create_app(device: &reify2::Device) -> Self;
+    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> Self;
     fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext<'_>);
 }
 
@@ -67,9 +67,9 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
 
         let display = unsafe { reify2::Display::create(&self.device, surface, extent) };
 
+        self.app = Some(A::create_app(&self.device, display.info()));
         self.window = Some(window);
         self.display = Some(display);
-        self.app = Some(A::create_app(&self.device));
     }
 
     fn window_event(

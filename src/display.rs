@@ -252,6 +252,10 @@ impl Display {
             &mut self.images[acquired as usize],
         )
     }
+
+    pub fn info(&self) -> &DisplayInfo {
+        &self.info
+    }
 }
 
 type PhantomUnSend = PhantomData<UnSend>;

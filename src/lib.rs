@@ -7,7 +7,7 @@ mod device;
 pub use device::{Device, PhysicalDevice};
 
 mod display;
-pub use display::Display;
+pub use display::{Display, DisplayInfo};
 
 mod instance;
 pub use instance::instance;

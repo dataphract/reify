@@ -373,6 +373,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "examples"
+version = "0.1.0"
+dependencies = [
+ "ash 0.38.0+1.3.281",
+ "naga",
+ "pretty_env_logger",
+ "reify2",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "winit",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1026,13 +1040,9 @@ dependencies = [
  "bytemuck",
  "gpu-allocator",
  "naga",
- "pretty_env_logger",
  "raw-window-handle",
  "tracing",
  "tracing-log",
- "tracing-subscriber",
- "tracing-tracy",
- "winit",
 ]
 
 [[package]]

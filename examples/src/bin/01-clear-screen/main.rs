@@ -9,19 +9,19 @@ fn main() {
 
 struct ClearScreenApp {
     _pipe_layout: vk::PipelineLayout,
-    _pipe: vk::Pipeline,
+    pipe: vk::Pipeline,
 }
 
 impl app::App for ClearScreenApp {
-    fn create_app(device: &reify2::Device) -> ClearScreenApp {
+    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> ClearScreenApp {
         let vert_src = r#"
 #version 460 core
 
 void main() {
     vec2 verts[3] = vec2[](
-        vec2(-0.5, 0.5),
-        vec2(0.5, 0.5),
-        vec2(0.0, -0.5)
+        vec2(-0.4, -0.5),
+        vec2(0.4, -0.5),
+        vec2(0.0, 0.5)
     );
 
     gl_Position = vec4(verts[gl_VertexIndex], 0.0, 1.0);
@@ -34,7 +34,7 @@ void main() {
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    out_color = vec4(1.0, 0.0, 0.0, 1.0);
+    out_color = vec4(0.0, 0.2, 1.0, 1.0);
 }
 "#;
 
@@ -114,7 +114,7 @@ void main() {
         let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(false)
             .depth_write_enable(false)
-            .depth_compare_op(vk::CompareOp::NEVER)
+            .depth_compare_op(vk::CompareOp::ALWAYS)
             .depth_bounds_test_enable(false)
             .stencil_test_enable(false)
             .front(vk::StencilOpState {
@@ -136,21 +136,22 @@ void main() {
                 reference: 0,
             });
 
-        let color_blend_attachments =
-            &[vk::PipelineColorBlendAttachmentState::default().blend_enable(false)];
+        let color_blend_attachments = &[vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::RGBA)];
         let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
             .flags(vk::PipelineColorBlendStateCreateFlags::empty())
             .logic_op_enable(false)
             .logic_op(vk::LogicOp::NO_OP)
             .attachments(color_blend_attachments)
-            .blend_constants([0.0; 4]);
+            .blend_constants([1.0; 4]);
 
         let dynamic_states = &[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
             .flags(vk::PipelineDynamicStateCreateFlags::empty())
             .dynamic_states(dynamic_states);
 
-        let color_attachment_formats = &[vk::Format::B8G8R8A8_SRGB];
+        let color_attachment_formats = &[display_info.surface_format.format];
         let mut pipeline_rendering_create_info = vk::PipelineRenderingCreateInfo::default()
             .view_mask(0)
             .color_attachment_formats(color_attachment_formats)
@@ -191,7 +192,7 @@ void main() {
 
         ClearScreenApp {
             _pipe_layout: pipe_layout,
-            _pipe: pipe,
+            pipe,
         }
     }
 
@@ -199,14 +200,17 @@ void main() {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(cx.swapchain_image().view())
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .resolve_mode(vk::ResolveModeFlags::NONE)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue {
                 color: vk::ClearColorValue {
-                    float32: [0.4, 0.5, 1.0, 1.0],
+                    float32: [0.0, 0.0, 0.0, 1.0],
                 },
             });
         let color_attachments = &[color_attachment];
+
+        let display_info = cx.display_info();
 
         let rendering_info = vk::RenderingInfo::default()
             .flags(vk::RenderingFlags::empty())
@@ -220,6 +224,33 @@ void main() {
 
         unsafe {
             device.cmd_begin_rendering(cx.command_buffer(), &rendering_info);
+
+            device.cmd_bind_pipeline(
+                cx.command_buffer(),
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipe,
+            );
+            device.cmd_set_viewport(
+                cx.command_buffer(),
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: display_info.image_extent.width as f32,
+                    height: display_info.image_extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            device.cmd_set_scissor(
+                cx.command_buffer(),
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: display_info.image_extent,
+                }],
+            );
+            device.cmd_draw(cx.command_buffer(), 3, 1, 0, 0);
 
             device.cmd_end_rendering(cx.command_buffer());
         }
