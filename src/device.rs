@@ -174,6 +174,7 @@ impl PhysicalDevice {
     }
 }
 
+#[derive(Clone)]
 pub struct Device {
     inner: Arc<DeviceInner>,
 }

@@ -12,6 +12,7 @@ members = [
 ash = "0.38.0"
 bytemuck = { version = "1.16.0" }
 gpu-allocator = "0.26.0"
+id-arena = "2.2.1"
 naga = { version = "0.20.0" }
 raw-window-handle = "0.6.2"
 reify2 = { path = "." }
@@ -22,6 +23,7 @@ tracing-log = "0.2.0"
 ash = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 gpu-allocator = { workspace = true }
+id-arena = { workspace = true }
 naga = { workspace = true, features = ["glsl-in", "spv-out", "spv-in"] }
 raw-window-handle = { workspace = true }
 tracing = { workspace = true }

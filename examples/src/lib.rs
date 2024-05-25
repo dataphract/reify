@@ -7,7 +7,7 @@ use winit::{
 
 pub trait App {
     fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> Self;
-    fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext<'_>);
+    fn render(&self, cx: &mut reify2::FrameContext<'_>);
 }
 
 pub struct AppRunner<A> {
@@ -94,7 +94,7 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
                     .unwrap()
                     .acquire_frame_context(&self.device);
 
-                self.app.as_ref().unwrap().render(&self.device, &mut cx);
+                self.app.as_ref().unwrap().render(&mut cx);
 
                 cx.submit_and_present(&self.device);
                 self.window.as_ref().unwrap().request_redraw();

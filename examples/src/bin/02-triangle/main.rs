@@ -194,7 +194,8 @@ void main() {
         }
     }
 
-    fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext) {
+    fn render(&self, cx: &mut reify2::FrameContext) {
+        let device = cx.device().clone();
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(cx.swapchain_image().view())
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)

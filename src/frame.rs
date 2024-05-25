@@ -183,6 +183,7 @@ impl<'frame> AvailableFrameContext<'frame> {
         unsafe { device.cmd_pipeline_barrier2(self.frame.commands, &dependency_info) };
 
         FrameContext {
+            device: device.clone(),
             display_info,
             resources: self.frame,
             attached: swapchain_image,
@@ -192,6 +193,7 @@ impl<'frame> AvailableFrameContext<'frame> {
 }
 
 pub struct FrameContext<'frame> {
+    device: Device,
     display_info: &'frame DisplayInfo,
     resources: &'frame mut FrameResources,
     attached: &'frame mut SwapchainImage,
@@ -280,6 +282,10 @@ impl<'frame> FrameContext<'frame> {
                 .present(&present_info)
                 .expect("failed to present swapchain image");
         }
+    }
+
+    pub fn device(&self) -> &Device {
+        &self.device
     }
 
     pub fn display_info(&self) -> &DisplayInfo {

@@ -3,11 +3,16 @@ use std::sync::OnceLock;
 use ash::{khr, vk};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
+mod arena;
+
 mod device;
 pub use device::{Device, PhysicalDevice};
 
 mod display;
 pub use display::{Display, DisplayInfo};
+
+mod graph;
+pub use graph::{Graph, GraphBuilder, GraphImageInfo};
 
 mod instance;
 pub use instance::instance;
@@ -16,6 +21,11 @@ mod frame;
 pub use frame::FrameContext;
 
 mod misc;
+
+mod render_pass;
+pub use render_pass::{
+    ClearColor, ColorAttachmentInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
+};
 
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 

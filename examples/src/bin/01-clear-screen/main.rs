@@ -1,43 +1,58 @@
-use ash::vk;
-
 fn main() {
     examples::AppRunner::<ClearScreenApp>::new().run();
 }
 
-struct ClearScreenApp;
+struct ClearScreenApp {
+    graph: reify2::Graph,
+}
+
+struct ClearScreenPass {
+    attachments: [reify2::ColorAttachmentInfo; 1],
+}
+
+impl Default for ClearScreenPass {
+    fn default() -> Self {
+        Self {
+            attachments: [reify2::ColorAttachmentInfo {
+                label: "out_color".into(),
+                format: None,
+                load_op: reify2::LoadOp::Clear(reify2::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
+            }],
+        }
+    }
+}
+
+impl reify2::RenderPass for ClearScreenPass {
+    fn color_attachments(&self) -> &[reify2::ColorAttachmentInfo] {
+        &self.attachments
+    }
+}
 
 impl examples::App for ClearScreenApp {
     fn create_app(_device: &reify2::Device, _display_info: &reify2::DisplayInfo) -> ClearScreenApp {
-        ClearScreenApp
+        let mut graph = reify2::GraphBuilder::new();
+
+        let swapchain_image = graph.add_image(
+            "swapchain_image".into(),
+            reify2::GraphImageInfo {
+                // Infer format.
+                format: None,
+                // Infer extent.
+                extent: None,
+            },
+        );
+
+        let _pass = graph
+            .add_render_pass(ClearScreenPass::default())
+            .set_color_attachment("out_color".into(), swapchain_image, None)
+            .build();
+
+        let graph = graph.build(swapchain_image);
+
+        ClearScreenApp { graph }
     }
 
-    fn render(&self, device: &reify2::Device, cx: &mut reify2::FrameContext) {
-        let color_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(cx.swapchain_image().view())
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .resolve_mode(vk::ResolveModeFlags::NONE)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .clear_value(vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
-                },
-            });
-        let color_attachments = &[color_attachment];
-
-        let rendering_info = vk::RenderingInfo::default()
-            .flags(vk::RenderingFlags::empty())
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: cx.display_info().image_extent,
-            })
-            .layer_count(1)
-            .view_mask(0)
-            .color_attachments(color_attachments);
-
-        unsafe {
-            device.cmd_begin_rendering(cx.command_buffer(), &rendering_info);
-            device.cmd_end_rendering(cx.command_buffer());
-        }
+    fn render(&self, cx: &mut reify2::FrameContext) {
+        self.graph.execute(cx);
     }
 }
