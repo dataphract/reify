@@ -11,6 +11,10 @@ pub trait RenderPass {
     fn color_attachments(&self) -> &[ColorAttachmentInfo] {
         &[]
     }
+
+    fn debug_label(&self) -> CString {
+        c"[unlabeled render pass node]".into()
+    }
 }
 
 pub struct RenderPassBuilder<'graph, R> {
@@ -125,8 +129,14 @@ struct RenderPassNode<R> {
 }
 
 unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
+    #[inline]
     fn outputs(&self) -> NodeOutputs {
         self.outputs.as_node_outputs()
+    }
+
+    #[inline]
+    fn debug_label(&self) -> CString {
+        self.pass.debug_label()
     }
 
     unsafe fn execute(&self, cx: &mut FrameContext) {
@@ -196,6 +206,8 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
         // TODO run pipelines
         for pipeline in &self.pipelines {
             unsafe {
+                cx.enter_debug_span(&pipeline.object.debug_label(), [0.6, 1.0, 0.6, 1.0]);
+
                 device.cmd_bind_pipeline(
                     cmdbuf,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -217,6 +229,8 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
 
                 let mut pipe_instance = GraphicsPipelineInstance { cx };
                 pipeline.object.execute(&mut pipe_instance);
+
+                cx.exit_debug_span();
             }
         }
 
@@ -262,6 +276,10 @@ pub trait GraphicsPipeline {
     fn primitive_info(&self) -> GraphicsPipelinePrimitiveInfo;
     fn fragment_info(&self) -> GraphicsPipelineFragmentInfo;
     fn attachment_info(&self) -> GraphicsPipelineAttachmentInfo;
+
+    fn debug_label(&self) -> CString {
+        c"[unlabeled graphics pipeline]".into()
+    }
 
     fn execute(&self, pipe: &mut GraphicsPipelineInstance<'_, '_>);
 }

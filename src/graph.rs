@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    ffi::CString,
     hash::Hash,
 };
 
@@ -70,7 +71,10 @@ impl Graph {
 
             unsafe {
                 device.cmd_pipeline_barrier2(cmdbuf, &deps);
+
+                cx.enter_debug_span(&node.node.debug_label(), [1.0, 0.6, 0.6, 1.0]);
                 node.node.execute(cx);
+                cx.exit_debug_span();
             }
         }
     }
@@ -313,6 +317,11 @@ struct ImageAccess {
 pub unsafe trait Node: Any {
     fn outputs(&self) -> NodeOutputs {
         NodeOutputs { images: &[] }
+    }
+
+    /// Returns the label used to annotate this node's debug spans.
+    fn debug_label(&self) -> CString {
+        c"[unlabeled node]".into()
     }
 
     unsafe fn execute(&self, cx: &mut FrameContext) {

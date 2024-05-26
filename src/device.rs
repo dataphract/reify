@@ -219,6 +219,24 @@ impl Device {
     }
 
     #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn cmd_begin_debug_utils_label(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        label_info: &vk::DebugUtilsLabelEXT,
+    ) {
+        self.inner
+            .ext_debug_utils
+            .cmd_begin_debug_utils_label(command_buffer, label_info)
+    }
+
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn cmd_end_debug_utils_label(&self, command_buffer: vk::CommandBuffer) {
+        self.inner
+            .ext_debug_utils
+            .cmd_end_debug_utils_label(command_buffer)
+    }
+
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn create_swapchain(
         &self,
         info: &vk::SwapchainCreateInfoKHR,
@@ -476,6 +494,32 @@ pub struct Queue<'device> {
 }
 
 impl<'device> Queue<'device> {
+    pub unsafe fn begin_debug_utils_label(&self, label_info: &vk::DebugUtilsLabelEXT) {
+        let queue_guard = self.device.inner.queue.lock().unwrap();
+
+        unsafe {
+            self.device
+                .inner
+                .ext_debug_utils
+                .queue_begin_debug_utils_label(*queue_guard, label_info)
+        };
+
+        drop(queue_guard);
+    }
+
+    pub unsafe fn end_debug_utils_label(&self) {
+        let queue_guard = self.device.inner.queue.lock().unwrap();
+
+        unsafe {
+            self.device
+                .inner
+                .ext_debug_utils
+                .queue_end_debug_utils_label(*queue_guard)
+        };
+
+        drop(queue_guard);
+    }
+
     #[tracing::instrument(skip_all)]
     pub unsafe fn present(&self, info: &vk::PresentInfoKHR) -> VkResult<bool> {
         let queue_guard = self.device.inner.queue.lock().unwrap();

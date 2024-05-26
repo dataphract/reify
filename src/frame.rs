@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{ffi::CStr, time::Duration};
 
 use ash::{prelude::*, vk};
+use tracing_log::log;
 
 use crate::{
     display::{DisplayInfo, SwapchainImage},
@@ -188,6 +189,8 @@ impl<'frame> AvailableFrameContext<'frame> {
             resources: self.frame,
             attached: swapchain_image,
             swapchain,
+
+            num_active_debug_spans: 0,
         }
     }
 }
@@ -198,6 +201,8 @@ pub struct FrameContext<'frame> {
     resources: &'frame mut FrameResources,
     attached: &'frame mut SwapchainImage,
     swapchain: vk::SwapchainKHR,
+
+    num_active_debug_spans: u32,
 }
 
 impl<'frame> FrameContext<'frame> {
@@ -282,6 +287,30 @@ impl<'frame> FrameContext<'frame> {
                 .present(&present_info)
                 .expect("failed to present swapchain image");
         }
+    }
+
+    /// Enters a debug span in the command buffer.
+    pub(crate) unsafe fn enter_debug_span(&mut self, label: &CStr, color: [f32; 4]) {
+        unsafe {
+            self.device.cmd_begin_debug_utils_label(
+                self.command_buffer(),
+                &vk::DebugUtilsLabelEXT::default()
+                    .label_name(label)
+                    .color(color),
+            )
+        };
+
+        self.num_active_debug_spans += 1;
+    }
+
+    /// Exits a debug span in the command buffer.
+    pub(crate) unsafe fn exit_debug_span(&mut self) {
+        if self.num_active_debug_spans == 0 {
+            log::error!("called exit_debug_span() with no spans active.");
+            return;
+        }
+
+        unsafe { self.device.cmd_end_debug_utils_label(self.command_buffer()) };
     }
 
     pub fn device(&self) -> &Device {

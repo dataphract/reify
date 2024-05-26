@@ -1,3 +1,5 @@
+use std::ffi::CString;
+
 use ash::vk;
 use naga::front::glsl;
 
@@ -28,6 +30,10 @@ impl Default for TriangleRenderPass {
 impl reify2::RenderPass for TriangleRenderPass {
     fn color_attachments(&self) -> &[reify2::ColorAttachmentInfo] {
         &self.color_attachments
+    }
+
+    fn debug_label(&self) -> CString {
+        c"triangle_pass".into()
     }
 }
 
@@ -68,6 +74,10 @@ impl reify2::GraphicsPipeline for TrianglePipeline {
             depth: vk::Format::UNDEFINED,
             stencil: vk::Format::UNDEFINED,
         }
+    }
+
+    fn debug_label(&self) -> CString {
+        c"triangle_pipeline".into()
     }
 
     fn execute(&self, pipe: &mut reify2::GraphicsPipelineInstance<'_, '_>) {
