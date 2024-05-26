@@ -24,7 +24,9 @@ mod misc;
 
 mod render_pass;
 pub use render_pass::{
-    ClearColor, ColorAttachmentInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
+    ClearColor, ColorAttachmentInfo, GraphicsPipeline, GraphicsPipelineAttachmentInfo,
+    GraphicsPipelineFragmentInfo, GraphicsPipelineInstance, GraphicsPipelinePrimitiveInfo,
+    GraphicsPipelineVertexInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
 };
 
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();

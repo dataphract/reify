@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::CString};
 
 use ash::vk;
 
 use crate::{
     graph::{GraphImage, GraphKey, GraphNode, Node, NodeOutputs, OutputImage, OwnedNodeOutputs},
-    FrameContext, GraphBuilder,
+    Device, FrameContext, GraphBuilder,
 };
 
 pub trait RenderPass {
@@ -18,6 +18,8 @@ pub struct RenderPassBuilder<'graph, R> {
 
     pass: R,
     slots: RenderPassSlots,
+
+    pipelines: Vec<RenderPassGraphicsPipeline>,
 }
 
 impl<'graph, R> RenderPassBuilder<'graph, R>
@@ -29,6 +31,7 @@ where
             graph,
             pass,
             slots: RenderPassSlots::default(),
+            pipelines: Vec::new(),
         }
     }
 
@@ -54,10 +57,12 @@ where
                 pass: self.pass,
                 _slots: self.slots,
                 outputs,
+                pipelines: self.pipelines,
             }),
         })
     }
 
+    #[must_use]
     pub fn set_color_attachment(
         mut self,
         label: String,
@@ -85,6 +90,19 @@ where
 
         self
     }
+
+    #[must_use]
+    pub fn add_graphics_pipeline<P>(mut self, device: &Device, pipeline: P) -> Self
+    where
+        P: GraphicsPipeline + 'static,
+    {
+        let storage = create_graphics_pipeline_storage(device, &pipeline);
+        self.pipelines.push(RenderPassGraphicsPipeline {
+            storage,
+            object: Box::new(pipeline),
+        });
+        self
+    }
 }
 
 #[derive(Default)]
@@ -102,6 +120,8 @@ struct RenderPassNode<R> {
 
     _slots: RenderPassSlots,
     outputs: OwnedNodeOutputs,
+
+    pipelines: Vec<RenderPassGraphicsPipeline>,
 }
 
 unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
@@ -147,12 +167,14 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
             .map(color_attachment_info)
             .collect::<Vec<_>>();
 
+        let render_area = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: cx.display_info().image_extent,
+        };
+
         let rendering_info = vk::RenderingInfo::default()
             .flags(vk::RenderingFlags::empty())
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: cx.display_info().image_extent,
-            })
+            .render_area(render_area)
             .layer_count(1)
             .view_mask(0)
             .color_attachments(&color_attachments);
@@ -165,13 +187,38 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
         //     render_info = render_info.stencil_attachment(&stencil);
         // }
 
+        let device = cx.device().clone();
+        let cmdbuf = cx.command_buffer();
         unsafe {
-            let device = cx.device();
-            let cmdbuf = cx.command_buffer();
             device.cmd_begin_rendering(cmdbuf, &rendering_info);
         }
 
         // TODO run pipelines
+        for pipeline in &self.pipelines {
+            unsafe {
+                device.cmd_bind_pipeline(
+                    cmdbuf,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline.storage.handle,
+                );
+                device.cmd_set_viewport(
+                    cmdbuf,
+                    0,
+                    &[vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: render_area.extent.width as f32,
+                        height: render_area.extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    }],
+                );
+                device.cmd_set_scissor(cmdbuf, 0, &[render_area]);
+
+                let mut pipe_instance = GraphicsPipelineInstance { cx };
+                pipeline.object.execute(&mut pipe_instance);
+            }
+        }
 
         unsafe {
             cx.device().cmd_end_rendering(cx.command_buffer());
@@ -209,3 +256,236 @@ pub struct OutputAttachmentInfo<T> {
 }
 
 pub type ColorAttachmentInfo = OutputAttachmentInfo<ClearColor>;
+
+pub trait GraphicsPipeline {
+    fn vertex_info(&self) -> GraphicsPipelineVertexInfo;
+    fn primitive_info(&self) -> GraphicsPipelinePrimitiveInfo;
+    fn fragment_info(&self) -> GraphicsPipelineFragmentInfo;
+    fn attachment_info(&self) -> GraphicsPipelineAttachmentInfo;
+
+    fn execute(&self, pipe: &mut GraphicsPipelineInstance<'_, '_>);
+}
+
+pub struct GraphicsPipelineVertexInfo {
+    pub shader_spv: Vec<u32>,
+    pub entry: CString,
+}
+
+pub struct GraphicsPipelinePrimitiveInfo {
+    pub topology: vk::PrimitiveTopology,
+    pub primitive_restart_enable: bool,
+    pub polygon_mode: vk::PolygonMode,
+    pub cull_mode: vk::CullModeFlags,
+    pub front_face: vk::FrontFace,
+}
+
+pub struct GraphicsPipelineFragmentInfo {
+    pub shader_spv: Vec<u32>,
+    pub entry: CString,
+}
+
+pub struct GraphicsPipelineAttachmentInfo {
+    pub color: Vec<vk::Format>,
+    pub depth: vk::Format,
+    pub stencil: vk::Format,
+}
+
+pub struct GraphicsPipelineStorage {
+    handle: vk::Pipeline,
+    _layout: vk::PipelineLayout,
+    _vert_module: vk::ShaderModule,
+    _frag_module: vk::ShaderModule,
+}
+
+pub struct RenderPassGraphicsPipeline {
+    storage: GraphicsPipelineStorage,
+    object: Box<dyn GraphicsPipeline>,
+}
+
+pub struct GraphicsPipelineInstance<'pipe, 'frame> {
+    cx: &'pipe mut FrameContext<'frame>,
+}
+
+impl<'pipe, 'frame> GraphicsPipelineInstance<'pipe, 'frame> {
+    pub fn draw(&mut self, vertex_count: u32, first_vertex: u32) {
+        let device = self.cx.device();
+        let cmdbuf = self.cx.command_buffer();
+
+        unsafe {
+            device.cmd_draw(cmdbuf, vertex_count, 1, first_vertex, 0);
+        }
+    }
+}
+
+fn create_graphics_pipeline_storage<P>(device: &Device, pipeline: &P) -> GraphicsPipelineStorage
+where
+    P: GraphicsPipeline,
+{
+    let vertex_info = pipeline.vertex_info();
+    let primitive_info = pipeline.primitive_info();
+    let fragment_info = pipeline.fragment_info();
+    let attachment_info = pipeline.attachment_info();
+
+    let vert_module = unsafe {
+        device
+            .create_shader_module(
+                &vk::ShaderModuleCreateInfo::default()
+                    .flags(vk::ShaderModuleCreateFlags::empty())
+                    .code(&vertex_info.shader_spv),
+            )
+            .unwrap()
+    };
+
+    let frag_module = unsafe {
+        device
+            .create_shader_module(
+                &vk::ShaderModuleCreateInfo::default()
+                    .flags(vk::ShaderModuleCreateFlags::empty())
+                    .code(&fragment_info.shader_spv),
+            )
+            .unwrap()
+    };
+
+    let stages = &[
+        vk::PipelineShaderStageCreateInfo::default()
+            .flags(vk::PipelineShaderStageCreateFlags::empty())
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vert_module)
+            .name(&vertex_info.entry),
+        vk::PipelineShaderStageCreateInfo::default()
+            .flags(vk::PipelineShaderStageCreateFlags::empty())
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(frag_module)
+            .name(&fragment_info.entry),
+    ];
+
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default()
+        .flags(vk::PipelineVertexInputStateCreateFlags::empty())
+        // TODO
+        .vertex_binding_descriptions(&[])
+        // TODO
+        .vertex_attribute_descriptions(&[]);
+
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .flags(vk::PipelineInputAssemblyStateCreateFlags::empty())
+        .topology(primitive_info.topology)
+        .primitive_restart_enable(primitive_info.primitive_restart_enable);
+
+    // Viewport state is dynamic, so no viewport or scissor info.
+    //
+    // TODO(dp): support multiple viewports
+    let viewports = &[vk::Viewport::default()];
+    let scissors = &[vk::Rect2D::default()];
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .flags(vk::PipelineViewportStateCreateFlags::empty())
+        .viewports(viewports)
+        .scissors(scissors);
+
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(primitive_info.polygon_mode)
+        .cull_mode(primitive_info.cull_mode)
+        .front_face(primitive_info.front_face)
+        // TODO(dp): support depth bias
+        .depth_bias_enable(false)
+        .depth_bias_constant_factor(0.0)
+        .depth_bias_clamp(0.0)
+        .depth_bias_slope_factor(1.0)
+        .line_width(1.0);
+
+    // TODO(dp): support multisampling
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
+        .flags(vk::PipelineMultisampleStateCreateFlags::default())
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+        .sample_shading_enable(false)
+        .min_sample_shading(0.0)
+        .sample_mask(&[])
+        .alpha_to_coverage_enable(false)
+        .alpha_to_one_enable(false);
+
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_test_enable(false)
+        .depth_write_enable(false)
+        .depth_compare_op(vk::CompareOp::ALWAYS)
+        .depth_bounds_test_enable(false)
+        .stencil_test_enable(false)
+        .front(vk::StencilOpState {
+            fail_op: vk::StencilOp::KEEP,
+            pass_op: vk::StencilOp::KEEP,
+            depth_fail_op: vk::StencilOp::KEEP,
+            compare_op: vk::CompareOp::NEVER,
+            compare_mask: 0,
+            write_mask: 0,
+            reference: 0,
+        })
+        .back(vk::StencilOpState {
+            fail_op: vk::StencilOp::KEEP,
+            pass_op: vk::StencilOp::KEEP,
+            depth_fail_op: vk::StencilOp::KEEP,
+            compare_op: vk::CompareOp::NEVER,
+            compare_mask: 0,
+            write_mask: 0,
+            reference: 0,
+        });
+
+    let color_blend_attachments = &[vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(false)
+        .color_write_mask(vk::ColorComponentFlags::RGBA)];
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
+        .flags(vk::PipelineColorBlendStateCreateFlags::empty())
+        .logic_op_enable(false)
+        .logic_op(vk::LogicOp::NO_OP)
+        .attachments(color_blend_attachments)
+        .blend_constants([1.0; 4]);
+
+    let dynamic_states = &[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
+        .flags(vk::PipelineDynamicStateCreateFlags::empty())
+        .dynamic_states(dynamic_states);
+
+    let mut pipeline_rendering_create_info = vk::PipelineRenderingCreateInfo::default()
+        .view_mask(0)
+        .color_attachment_formats(&attachment_info.color)
+        .depth_attachment_format(attachment_info.depth)
+        .stencil_attachment_format(attachment_info.stencil);
+
+    let layout_create_info = vk::PipelineLayoutCreateInfo::default()
+        .flags(vk::PipelineLayoutCreateFlags::empty())
+        .set_layouts(&[])
+        .push_constant_ranges(&[]);
+
+    let layout = unsafe { device.create_pipeline_layout(&layout_create_info).unwrap() };
+
+    let create_infos = &[vk::GraphicsPipelineCreateInfo::default()
+        .flags(vk::PipelineCreateFlags::empty())
+        .stages(stages)
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        // No tessellation state.
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
+        .color_blend_state(&color_blend_state)
+        .dynamic_state(&dynamic_state)
+        .layout(layout)
+        .render_pass(vk::RenderPass::null())
+        .subpass(0)
+        .base_pipeline_handle(vk::Pipeline::null())
+        .base_pipeline_index(-1)
+        .push_next(&mut pipeline_rendering_create_info)];
+
+    let pipeline = unsafe {
+        device
+            .create_graphics_pipelines(vk::PipelineCache::null(), create_infos)
+            .unwrap()[0]
+    };
+
+    GraphicsPipelineStorage {
+        handle: pipeline,
+        _layout: layout,
+        _vert_module: vert_module,
+        _frag_module: frag_module,
+    }
+}
