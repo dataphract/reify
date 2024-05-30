@@ -11,7 +11,10 @@ members = [
 [workspace.dependencies]
 ash = "0.38.0"
 bytemuck = { version = "1.16.0" }
-gpu-allocator = "0.26.0"
+
+# TODO: replace with crates.io version when released
+gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator.git", rev = "2e2296e" }
+
 id-arena = "2.2.1"
 naga = { version = "0.20.0" }
 raw-window-handle = "0.6.2"

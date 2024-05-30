@@ -4,6 +4,13 @@ use std::{
 };
 
 use ash::{ext, khr, prelude::*, vk};
+use gpu_allocator::{
+    vulkan::{
+        Allocation as GpuAllocation, AllocationCreateDesc as GpuAllocationCreateDesc,
+        Allocator as GpuAllocator,
+    },
+    AllocatorDebugSettings as GpuAllocatorDebugSettings,
+};
 use tracing_log::log;
 
 // Graphics, compute, transfer, present
@@ -157,6 +164,26 @@ impl PhysicalDevice {
         let khr_swapchain = khr::swapchain::Device::new(crate::instance().instance(), &device);
         let ext_debug_utils = ext::debug_utils::Device::new(crate::instance().instance(), &device);
 
+        // NOTE: Storing the instance and device inline makes this struct gigantic, nearly 1.5KiB.
+        // This shouldn't be large enough to overflow the stack, but it's worth keeping in mind.
+        let allocator_info = gpu_allocator::vulkan::AllocatorCreateDesc {
+            instance: crate::instance().instance().clone(),
+            device: device.clone(),
+            physical_device: self.raw(),
+            debug_settings: GpuAllocatorDebugSettings {
+                log_memory_information: true,
+                log_leaks_on_shutdown: true,
+                store_stack_traces: cfg!(debug_assertions),
+                log_allocations: false,
+                log_frees: false,
+                log_stack_traces: cfg!(debug_assertions),
+            },
+            buffer_device_address: false,
+            allocation_sizes: Default::default(),
+        };
+
+        let allocator = GpuAllocator::new(&allocator_info).unwrap();
+
         Device {
             inner: Arc::new(DeviceInner {
                 phys_device: self.clone(),
@@ -165,6 +192,7 @@ impl PhysicalDevice {
                 raw: device,
                 khr_swapchain,
                 ext_debug_utils,
+                allocator: Mutex::new(allocator),
             }),
         }
     }
@@ -193,20 +221,13 @@ struct DeviceInner {
     raw: ash::Device,
     khr_swapchain: khr::swapchain::Device,
     ext_debug_utils: ext::debug_utils::Device,
+
+    allocator: Mutex<gpu_allocator::vulkan::Allocator>,
 }
 
 impl Device {
-    pub fn physical_device(&self) -> &PhysicalDevice {
-        &self.inner.phys_device
-    }
-
-    // TODO(dp): remove this method when dedicated queues are supported
-    pub fn queue_family_index(&self) -> u32 {
-        self.inner.qf_index
-    }
-
-    pub fn queue(&self) -> Queue {
-        Queue { device: self }
+    pub fn allocate(&self, desc: &GpuAllocationCreateDesc) -> gpu_allocator::Result<GpuAllocation> {
+        self.inner.allocator.lock().unwrap().allocate(desc)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -237,6 +258,32 @@ impl Device {
     }
 
     #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn create_fences(
+        &self,
+        info: &vk::FenceCreateInfo,
+        count: usize,
+    ) -> VkResult<Vec<vk::Fence>> {
+        let mut v = Vec::with_capacity(count);
+
+        for _ in 0..count {
+            let fence = match unsafe { self.create_fence(info) } {
+                Ok(f) => f,
+                Err(e) => {
+                    for f in v.drain(..) {
+                        unsafe { self.destroy_fence(f) };
+                    }
+
+                    return Err(e);
+                }
+            };
+
+            v.push(fence);
+        }
+
+        Ok(v)
+    }
+
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn create_swapchain(
         &self,
         info: &vk::SwapchainCreateInfoKHR,
@@ -262,6 +309,29 @@ impl Device {
                 .ext_debug_utils
                 .set_debug_utils_object_name(name_info)
         }
+    }
+
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.inner.phys_device
+    }
+
+    // TODO(dp): remove this method when dedicated queues are supported
+    pub fn queue_family_index(&self) -> u32 {
+        self.inner.qf_index
+    }
+
+    pub fn transfer_queue_family_index(&self) -> u32 {
+        self.inner.qf_index
+    }
+
+    #[inline]
+    pub fn queue(&self) -> Queue {
+        Queue { device: self }
+    }
+
+    #[inline]
+    pub fn transfer_queue(&self) -> Queue {
+        self.queue()
     }
 }
 

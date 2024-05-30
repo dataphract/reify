@@ -1,4 +1,5 @@
 use ash::vk;
+use naga::{back, front, valid};
 use tracing_subscriber::layer::SubscriberExt;
 use winit::{
     event::WindowEvent, event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11,
@@ -101,5 +102,55 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
             }
             _ => (),
         }
+    }
+}
+
+pub struct GlslCompiler {
+    front: front::glsl::Frontend,
+    validator: valid::Validator,
+}
+
+impl Default for GlslCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GlslCompiler {
+    pub fn new() -> GlslCompiler {
+        let glsl_front = front::glsl::Frontend::default();
+
+        let validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        );
+
+        GlslCompiler {
+            front: glsl_front,
+            validator,
+        }
+    }
+
+    pub fn compile(&mut self, stage: naga::ShaderStage, glsl: &str) -> Vec<u32> {
+        let glsl_options = front::glsl::Options {
+            stage,
+            defines: Default::default(),
+        };
+
+        let parsed = self.front.parse(&glsl_options, glsl).unwrap();
+
+        let info = self.validator.validate(&parsed).unwrap();
+
+        let spv_options = back::spv::Options {
+            lang_version: (1, 6),
+            ..Default::default()
+        };
+
+        let pipe_opts = back::spv::PipelineOptions {
+            shader_stage: stage,
+            entry_point: "main".into(),
+        };
+
+        back::spv::write_vec(&parsed, &info, &spv_options, Some(&pipe_opts)).unwrap()
     }
 }

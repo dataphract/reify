@@ -29,6 +29,9 @@ pub use render_pass::{
     GraphicsPipelineVertexInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
 };
 
+mod transfer;
+pub use transfer::{UploadPool, UploadPoolInfo};
+
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 
 pub fn entry() -> &'static ash::Entry {
