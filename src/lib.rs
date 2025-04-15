@@ -5,6 +5,8 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 
 mod arena;
 
+mod depgraph;
+
 mod device;
 pub use device::{Device, PhysicalDevice};
 

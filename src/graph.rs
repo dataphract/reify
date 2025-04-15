@@ -1,14 +1,14 @@
 use std::{
     any::Any,
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet},
     ffi::CString,
-    hash::Hash,
 };
 
 use ash::vk;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
+    depgraph::DepGraph,
     misc::IMAGE_SUBRESOURCE_RANGE_FULL,
     FrameContext, RenderPass, RenderPassBuilder,
 };
@@ -18,7 +18,7 @@ pub struct Graph {
 
     _image_info: Arena<GraphImageInfo>,
 
-    graph: DependencyGraph,
+    graph: DepGraph<GraphKey, Dependency>,
     graph_order: Vec<arena::Key<GraphKey>>,
 
     nodes: Arena<GraphNode>,
@@ -33,7 +33,7 @@ impl Graph {
 
         for &dep_key in self.graph_order.iter() {
             let node_key = self.graph.node(dep_key);
-            let node = &self.nodes[node_key];
+            let node = &self.nodes[*node_key];
 
             for dep in self.graph.outgoing_deps(dep_key) {
                 for img in &dep.images {
@@ -116,7 +116,7 @@ impl GraphBuilder {
         //   by node B before A has finished its reads.
 
         // Insert memory dependencies.
-        let mut deps = DependencyGraph::default();
+        let mut deps: DepGraph<GraphKey, Dependency> = DepGraph::default();
         let mut next_depth = Vec::new();
         let mut cur_depth = HashSet::new();
         let mut consumers: HashMap<GraphKey, Vec<GraphImage>> = HashMap::new();
@@ -383,142 +383,4 @@ struct ImageDependency {
     dst_access_mask: vk::AccessFlags2,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
-}
-
-type EdgeKey = arena::Key<Edge>;
-
-#[derive(Default)]
-struct DependencyGraph {
-    nodes: Arena<GraphKey>,
-    adjacency: ArenaMap<arena::Key<GraphKey>, Vec<EdgeKey>>,
-    inv_adjacency: ArenaMap<arena::Key<GraphKey>, Vec<EdgeKey>>,
-
-    edges: Arena<Edge>,
-    edge_map: HashMap<Edge, EdgeKey>,
-    edge_weights: ArenaMap<EdgeKey, Dependency>,
-}
-
-impl DependencyGraph {
-    pub fn add_node(&mut self, node: GraphKey) -> arena::Key<GraphKey> {
-        let key = self.nodes.alloc(node);
-        self.adjacency.insert(key, Vec::new());
-        self.inv_adjacency.insert(key, Vec::new());
-        key
-    }
-
-    pub fn add_edge(
-        &mut self,
-        src: arena::Key<GraphKey>,
-        dst: arena::Key<GraphKey>,
-        dependency: Dependency,
-    ) -> EdgeKey {
-        // Can't have circular dependencies.
-        assert!(!self.edge_map.contains_key(&Edge { src: dst, dst: src }));
-
-        debug_assert!(self.nodes.get(src).is_some());
-        debug_assert!(self.nodes.get(dst).is_some());
-
-        let edge = Edge { src, dst };
-        let edge_key = self.edges.alloc(edge);
-        self.edge_weights.insert(edge_key, dependency);
-
-        self.adjacency[src].push(edge_key);
-        self.inv_adjacency[dst].push(edge_key);
-        self.edge_map.insert(edge, edge_key);
-
-        edge_key
-    }
-
-    pub fn edge_mut_or_default(
-        &mut self,
-        src: arena::Key<GraphKey>,
-        dst: arena::Key<GraphKey>,
-    ) -> &mut Dependency {
-        let edge = Edge { src, dst };
-
-        if let Some(&edge_key) = self.edge_map.get(&edge) {
-            return &mut self.edge_weights[edge_key];
-        }
-
-        let edge_key = self.add_edge(src, dst, Dependency::default());
-        &mut self.edge_weights[edge_key]
-    }
-
-    pub fn node(&self, key: arena::Key<GraphKey>) -> GraphKey {
-        self.nodes[key]
-    }
-
-    pub fn outgoing_deps(&self, key: arena::Key<GraphKey>) -> impl Iterator<Item = &Dependency> {
-        self.adjacency[key]
-            .iter()
-            .map(|&edge_key| &self.edge_weights[edge_key])
-    }
-
-    pub fn toposort_reverse(&self) -> Vec<arena::Key<GraphKey>> {
-        let mut sorted = VecDeque::with_capacity(self.nodes.len());
-
-        // TODO(dp): use a bitvec
-        let mut edges_seen: ArenaMap<EdgeKey, bool> = ArenaMap::default();
-
-        // Initialize the queue with the list of nodes with no dependents.
-        let mut queue = VecDeque::from_iter(
-            self.inv_adjacency
-                .iter()
-                .filter_map(|(key, adj)| adj.is_empty().then_some(key)),
-        );
-
-        while let Some(node_key) = queue.pop_front() {
-            sorted.push_front(node_key);
-
-            for &adj in &self.adjacency[node_key] {
-                // Mark each dependency.
-                edges_seen[adj] = true;
-
-                let dependency_key = self.edges[adj].dst;
-
-                if self.inv_adjacency[dependency_key]
-                    .iter()
-                    .all(|&e| edges_seen[e])
-                {
-                    // Queue any dependent node whose dependents are all marked.
-                    queue.push_back(dependency_key);
-                }
-            }
-        }
-
-        // If any edges have not been seen, the graph has at least one cycle.
-        if edges_seen.iter().any(|(_, &b)| !b) {
-            panic!("graph has cycles");
-        }
-
-        sorted.into()
-    }
-}
-
-struct Edge {
-    src: arena::Key<GraphKey>,
-    dst: arena::Key<GraphKey>,
-}
-
-impl Clone for Edge {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl Copy for Edge {}
-
-impl PartialEq for Edge {
-    fn eq(&self, other: &Self) -> bool {
-        self.src == other.src && self.dst == other.dst
-    }
-}
-
-impl Eq for Edge {}
-
-impl Hash for Edge {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.src.hash(state);
-        self.dst.hash(state);
-    }
 }
