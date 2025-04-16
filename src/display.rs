@@ -60,7 +60,11 @@ impl Display {
 
             let surface_supported = instance
                 .khr_surface()
-                .get_physical_device_surface_support(phys, device.queue_family_index(), surface)
+                .get_physical_device_surface_support(
+                    phys,
+                    device.graphics_queue().family().as_u32(),
+                    surface,
+                )
                 .expect("failed to verify physical device surface support");
 
             if !surface_supported {

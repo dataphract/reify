@@ -1,9 +1,16 @@
 use std::{
     ffi::{c_char, CStr},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
 
-use ash::{ext, khr, prelude::*, vk};
+use ash::{
+    ext, khr,
+    prelude::*,
+    vk::{self, Handle},
+};
 use gpu_allocator::{
     vulkan::{
         Allocation as GpuAllocation, AllocationCreateDesc as GpuAllocationCreateDesc,
@@ -13,8 +20,15 @@ use gpu_allocator::{
 };
 use tracing_log::log;
 
-// Graphics, compute, transfer, present
-const _MAX_DEVICE_QUEUES: usize = 4;
+// Graphics + present, compute, transfer.
+//
+// TODO(dp): there are almost certainly cases where multiple compute queues are desirable, and
+// possibly similar cases for multiple graphics queues, so this is subject to change or removal.
+const _MAX_DEVICE_QUEUES: usize = 3;
+
+// TODO(dp): this should become an array to support multiple devices in use at once. Device loss can
+// be handled with generational indices, if desired.
+static DEVICE: OnceLock<DeviceStorage> = OnceLock::new();
 
 pub struct _PhysicalDeviceProperties {
     // From `vk::PhysicalDeviceMaintenance3Properties`
@@ -184,17 +198,32 @@ impl PhysicalDevice {
 
         let allocator = GpuAllocator::new(&allocator_info).unwrap();
 
-        Device {
-            inner: Arc::new(DeviceInner {
-                phys_device: self.clone(),
-                qf_index,
-                queue: Mutex::new(queue),
-                raw: device,
-                khr_swapchain,
-                ext_debug_utils,
-                allocator: Mutex::new(allocator),
-            }),
-        }
+        let single_queue = Queue {
+            family: QueueFamily { index: qf_index },
+            index: 0,
+        };
+
+        // TODO(dp): replace with dedicated queues
+        let graphics_queue = single_queue.clone();
+        let upload_queue = single_queue.clone();
+        let download_queue = single_queue.clone();
+        let queues = vec![unsafe { QueueStorage::create(&device, queue) }];
+
+        let res = DEVICE.set(DeviceStorage {
+            phys_device: self.clone(),
+            graphics_queue,
+            upload_queue,
+            _download_queue: download_queue,
+            queues,
+            raw: device,
+            khr_swapchain,
+            ext_debug_utils,
+            allocator: Mutex::new(allocator),
+        });
+
+        assert!(res.is_ok());
+
+        Device {}
     }
 
     pub fn raw(&self) -> vk::PhysicalDevice {
@@ -203,20 +232,16 @@ impl PhysicalDevice {
 }
 
 #[derive(Clone)]
-pub struct Device {
-    inner: Arc<DeviceInner>,
-}
+pub struct Device {}
 
-struct DeviceInner {
+struct DeviceStorage {
     phys_device: PhysicalDevice,
-    // Queue family index.
-    //
-    // Currently, a single queue is used for all operations.
-    qf_index: u32,
 
-    // TODO(dp): vk::Queue is Copy, so this can be trivially copied out of the Mutex. Wrap it in
-    // something safer.
-    queue: Mutex<vk::Queue>,
+    graphics_queue: Queue,
+    upload_queue: Queue,
+    _download_queue: Queue,
+
+    queues: Vec<QueueStorage>,
 
     raw: ash::Device,
     khr_swapchain: khr::swapchain::Device,
@@ -227,7 +252,7 @@ struct DeviceInner {
 
 impl Device {
     pub fn allocate(&self, desc: &GpuAllocationCreateDesc) -> gpu_allocator::Result<GpuAllocation> {
-        self.inner.allocator.lock().unwrap().allocate(desc)
+        self.storage().allocator.lock().unwrap().allocate(desc)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -236,7 +261,9 @@ impl Device {
         &self,
         acquire_info: &vk::AcquireNextImageInfoKHR,
     ) -> VkResult<(u32, bool)> {
-        self.inner.khr_swapchain.acquire_next_image2(acquire_info)
+        self.storage()
+            .khr_swapchain
+            .acquire_next_image2(acquire_info)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -245,14 +272,14 @@ impl Device {
         command_buffer: vk::CommandBuffer,
         label_info: &vk::DebugUtilsLabelEXT,
     ) {
-        self.inner
+        self.storage()
             .ext_debug_utils
             .cmd_begin_debug_utils_label(command_buffer, label_info)
     }
 
     #[allow(clippy::missing_safety_doc)]
     pub unsafe fn cmd_end_debug_utils_label(&self, command_buffer: vk::CommandBuffer) {
-        self.inner
+        self.storage()
             .ext_debug_utils
             .cmd_end_debug_utils_label(command_buffer)
     }
@@ -288,7 +315,7 @@ impl Device {
         &self,
         info: &vk::SwapchainCreateInfoKHR,
     ) -> VkResult<vk::SwapchainKHR> {
-        self.inner.khr_swapchain.create_swapchain(info, None)
+        self.storage().khr_swapchain.create_swapchain(info, None)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -296,42 +323,45 @@ impl Device {
         &self,
         swapchain: vk::SwapchainKHR,
     ) -> VkResult<Vec<vk::Image>> {
-        unsafe { self.inner.khr_swapchain.get_swapchain_images(swapchain) }
+        unsafe { self.storage().khr_swapchain.get_swapchain_images(swapchain) }
     }
 
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn set_debug_utils_object_name(
+    pub unsafe fn set_debug_utils_object_name<T: Handle>(
         &self,
-        name_info: &vk::DebugUtilsObjectNameInfoEXT,
+        handle: T,
+        name: &CStr,
     ) -> VkResult<()> {
+        let name_info = vk::DebugUtilsObjectNameInfoEXT::default()
+            .object_handle(handle)
+            .object_name(name);
+
         unsafe {
-            self.inner
+            DEVICE
+                .get()
+                .unwrap()
                 .ext_debug_utils
-                .set_debug_utils_object_name(name_info)
+                .set_debug_utils_object_name(&name_info)
         }
     }
 
-    pub fn physical_device(&self) -> &PhysicalDevice {
-        &self.inner.phys_device
+    #[inline]
+    fn storage(&self) -> &'static DeviceStorage {
+        DEVICE.get().unwrap()
     }
 
-    // TODO(dp): remove this method when dedicated queues are supported
-    pub fn queue_family_index(&self) -> u32 {
-        self.inner.qf_index
-    }
-
-    pub fn transfer_queue_family_index(&self) -> u32 {
-        self.inner.qf_index
+    pub fn physical_device(&self) -> &'static PhysicalDevice {
+        &self.storage().phys_device
     }
 
     #[inline]
-    pub fn queue(&self) -> Queue {
-        Queue { device: self }
+    pub fn graphics_queue(&self) -> Queue {
+        self.storage().graphics_queue.clone()
     }
 
     #[inline]
-    pub fn transfer_queue(&self) -> Queue {
-        self.queue()
+    pub fn upload_queue(&self) -> Queue {
+        self.storage().upload_queue.clone()
     }
 }
 
@@ -499,12 +529,12 @@ macro_rules! device_delegate {
                 #[allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
                 $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
                     // SAFETY: upheld by outer contract.
-                    unsafe { self.inner.$name($($param),*) }
+                    unsafe { DEVICE.get().unwrap().raw.$name($($param),*) }
                 }
             )*
         }
 
-        impl DeviceInner {
+        impl DeviceStorage {
             $(
                 $(#[$m])*
                 #[inline(always)]
@@ -539,12 +569,12 @@ macro_rules! device_delegate_no_alloc_callbacks {
                 #[allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
                 $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
                     // SAFETY: upheld by outer contract.
-                    unsafe { self.inner.$name($($param),*) }
+                    unsafe { DEVICE.get().unwrap().$name($($param),*) }
                 }
             )*
         }
 
-        impl DeviceInner {
+        impl DeviceStorage {
             $(
                 $(#[$m])*
                 #[inline(always)]
@@ -559,17 +589,76 @@ macro_rules! device_delegate_no_alloc_callbacks {
 }
 use device_delegate_no_alloc_callbacks;
 
-pub struct Queue<'device> {
-    device: &'device Device,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct QueueFamily {
+    index: u32,
 }
 
-impl<'device> Queue<'device> {
+impl QueueFamily {
+    #[inline]
+    pub fn as_u32(self) -> u32 {
+        self.index
+    }
+}
+
+struct QueueStorage {
+    semaphore: vk::Semaphore,
+    timeline_value: AtomicU64,
+
+    // NOTE: vk::Queue is Copy, so this Mutex shouldn't be exposed outside the impl block for
+    // QueueStorage.
+    handle: Mutex<vk::Queue>,
+}
+
+impl QueueStorage {
+    unsafe fn create(device: &ash::Device, queue: vk::Queue) -> QueueStorage {
+        let timeline_value = 0;
+        let mut sem_type_info = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(timeline_value);
+        let sem_info = vk::SemaphoreCreateInfo::default()
+            .flags(vk::SemaphoreCreateFlags::empty())
+            .push_next(&mut sem_type_info);
+        let semaphore = unsafe { device.create_semaphore(&sem_info, None).unwrap() };
+
+        QueueStorage {
+            semaphore,
+            timeline_value: timeline_value.into(),
+            handle: Mutex::new(queue),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Queue {
+    /// The queue family to which the queue belongs.
+    family: QueueFamily,
+    /// The index of the queue in the device.
+    index: u32,
+}
+
+impl Queue {
+    #[inline]
+    fn device(&self) -> Device {
+        Device {}
+    }
+
+    #[inline]
+    pub fn family(&self) -> QueueFamily {
+        self.family
+    }
+
+    #[inline]
+    fn storage(&self) -> &'static QueueStorage {
+        &self.device().storage().queues[self.index as usize]
+    }
+
     pub unsafe fn begin_debug_utils_label(&self, label_info: &vk::DebugUtilsLabelEXT) {
-        let queue_guard = self.device.inner.queue.lock().unwrap();
+        let queue_guard = self.storage().handle.lock().unwrap();
 
         unsafe {
-            self.device
-                .inner
+            self.device()
+                .storage()
                 .ext_debug_utils
                 .queue_begin_debug_utils_label(*queue_guard, label_info)
         };
@@ -578,11 +667,11 @@ impl<'device> Queue<'device> {
     }
 
     pub unsafe fn end_debug_utils_label(&self) {
-        let queue_guard = self.device.inner.queue.lock().unwrap();
+        let queue_guard = self.storage().handle.lock().unwrap();
 
         unsafe {
-            self.device
-                .inner
+            self.device()
+                .storage()
                 .ext_debug_utils
                 .queue_end_debug_utils_label(*queue_guard)
         };
@@ -592,11 +681,11 @@ impl<'device> Queue<'device> {
 
     #[tracing::instrument(skip_all)]
     pub unsafe fn present(&self, info: &vk::PresentInfoKHR) -> VkResult<bool> {
-        let queue_guard = self.device.inner.queue.lock().unwrap();
+        let queue_guard = self.storage().handle.lock().unwrap();
 
         let res = unsafe {
-            self.device
-                .inner
+            self.device()
+                .storage()
                 .khr_swapchain
                 .queue_present(*queue_guard, info)
         };
@@ -611,11 +700,16 @@ impl<'device> Queue<'device> {
         &self,
         submits: &[vk::SubmitInfo2],
         fence: Option<vk::Fence>,
-    ) -> VkResult<()> {
-        let queue_guard = self.device.inner.queue.lock().unwrap();
+    ) -> VkResult<SubmissionId> {
+        let timeline_value = self
+            .storage()
+            .timeline_value
+            .fetch_add(1, Ordering::Relaxed);
+
+        let queue_guard = self.storage().handle.lock().unwrap();
 
         let res = unsafe {
-            self.device.inner.raw.queue_submit2(
+            self.device().storage().raw.queue_submit2(
                 *queue_guard,
                 submits,
                 fence.unwrap_or(vk::Fence::null()),
@@ -624,6 +718,15 @@ impl<'device> Queue<'device> {
 
         drop(queue_guard);
 
-        res
+        res.map(|()| SubmissionId {
+            queue: self.clone(),
+            timeline_value,
+        })
     }
+}
+
+#[derive(Clone)]
+pub(crate) struct SubmissionId {
+    queue: Queue,
+    timeline_value: u64,
 }

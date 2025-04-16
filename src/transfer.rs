@@ -3,7 +3,6 @@ use std::{
     ptr::NonNull,
     slice,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
 };
 
 use ash::vk;
@@ -66,6 +65,7 @@ impl UploadBuffer {
     fn create(device: &Device, info: &UploadBufferInfo) -> UploadBuffer {
         let info = info.clone();
 
+        // Create the buffer object.
         let buffer_info = vk::BufferCreateInfo::default()
             .flags(vk::BufferCreateFlags::empty())
             .size(info.size)
@@ -73,29 +73,27 @@ impl UploadBuffer {
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             // Ignored due to exclusive sharing mode.
             .queue_family_indices(&[]);
-
         let buffer = unsafe { device.create_buffer(&buffer_info).unwrap() };
 
+        // Allocate and bind the backing memory for the buffer.
         let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-
         let mem = device
             .allocate(&GpuAllocationCreateDesc {
-                // TODO: uniquely name upload buffers
-                name: "upload_buffer",
+                name: &info.label,
                 requirements,
                 location: gpu_allocator::MemoryLocation::CpuToGpu,
                 linear: true,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
             .unwrap();
-
         unsafe { device.bind_buffer_memory(buffer, mem.memory(), 0).unwrap() };
 
         let mapped: NonNull<u8> = mem.mapped_ptr().unwrap().cast();
 
+        // Create a command pool and a single command buffer.
         let cmd_pool_info = vk::CommandPoolCreateInfo::default()
             .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-            .queue_family_index(device.queue_family_index());
+            .queue_family_index(device.upload_queue().family().as_u32());
         let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info).unwrap() };
         let cmd_buf_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(cmd_pool)
@@ -103,6 +101,7 @@ impl UploadBuffer {
             .command_buffer_count(1);
         let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info).unwrap()[0] };
 
+        // Create a timeline semaphore.
         let timeline_value = 0;
         let mut sem_type_info = vk::SemaphoreTypeCreateInfo::default()
             .semaphore_type(vk::SemaphoreType::TIMELINE)
@@ -175,11 +174,11 @@ struct BufferCopy {
     /// Index of the destination queue family.
     dst_queue_family: u32,
 
-    /// Offset of the start of the source range.
+    /// Offset in bytes of the start of the source range.
     src_offset: u64,
-    /// Offset of the start of the destination range.
+    /// Offset in bytes of the start of the destination range.
     dst_offset: u64,
-    /// Size of the copied range.
+    /// Size in bytes of the copied range.
     size: u64,
 }
 
@@ -207,6 +206,7 @@ impl<'buf> UploadBufferRangeMut<'buf> {
     }
 }
 
+/// Creation parameters for an [`UploadPool`].
 #[derive(Clone)]
 pub struct UploadPoolInfo {
     pub label: String,
@@ -214,7 +214,14 @@ pub struct UploadPoolInfo {
     pub buffer_size: u64,
 }
 
+/// A pool of buffers used to upload data from the host to the GPU.
+///
+/// This pool consists of a ring of host-writable buffers. Upload operations are recorded in
+/// batches, with each batch identified by an [`UploadKey`]. Subsequent submissions can make use of
+/// the uploaded data by defining a dependency on the upload key.
 pub struct UploadPool {
+    device: Device,
+
     buffers: Vec<UploadBuffer>,
     available: Vec<vk::Fence>,
 
@@ -222,6 +229,7 @@ pub struct UploadPool {
 }
 
 impl UploadPool {
+    /// Creates a new upload pool.
     pub fn create(device: &Device, pool_info: &UploadPoolInfo) -> UploadPool {
         let info = pool_info.clone();
 
@@ -244,28 +252,30 @@ impl UploadPool {
         };
 
         let mut pool = UploadPool {
+            device: device.clone(),
             buffers,
             available,
             current: None,
         };
 
-        let idx = pool.wait_any_available(device);
-        pool.begin_buffer(device, idx);
+        let idx = pool.wait_any_available();
+        pool.begin_buffer(idx);
+        pool.current = Some(idx);
 
         pool
     }
 
     /// Returns `true` if the buffer at index `idx` is available.
-    fn is_available(&self, device: &Device, idx: usize) -> bool {
-        unsafe { device.get_fence_status(self.available[idx]).unwrap() }
+    fn is_available(&self, idx: usize) -> bool {
+        unsafe { self.device.get_fence_status(self.available[idx]).unwrap() }
     }
 
     /// Waits for an upload buffer to become available.
     ///
     /// Returns the index of the first available buffer.
-    fn wait_any_available(&self, device: &Device) -> usize {
+    fn wait_any_available(&self) -> usize {
         unsafe {
-            device
+            self.device
                 .wait_for_fences(&self.available, false, timeout_u64(None))
                 .unwrap();
         }
@@ -274,28 +284,42 @@ impl UploadPool {
             .iter()
             .enumerate()
             .find_map(|(idx, &fence)| unsafe {
-                device.get_fence_status(fence).unwrap().then_some(idx)
+                self.device.get_fence_status(fence).unwrap().then_some(idx)
             })
             .unwrap()
     }
 
-    fn begin_buffer(&mut self, device: &Device, idx: usize) {
+    fn begin_buffer(&mut self, idx: usize) {
+        tracing_log::log::info!(
+            "begin_buffer:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+
         assert!(self.current.is_none());
-        assert!(self.is_available(device, idx));
+        assert!(self.is_available(idx));
 
         let begin_info = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
         unsafe {
-            device
+            self.device
+                .reset_command_pool(
+                    self.buffers[idx].cmd_pool,
+                    vk::CommandPoolResetFlags::empty(),
+                )
+                .unwrap();
+            self.device
                 .begin_command_buffer(self.buffers[idx].cmd_buf, &begin_info)
                 .unwrap();
         }
     }
 
-    fn submit(&mut self, device: &Device) {
+    /// Submits all scheduled upload operations for execution by the device.
+    pub fn submit(&mut self, device: &Device) {
         let idx = self.current.take().unwrap();
         let buffer = &mut self.buffers[idx];
+
+        let upload_queue = device.upload_queue();
 
         // TODO(dp): group by buffer handle to emit multi-region barriers
         let mut buffer_barriers = Vec::new();
@@ -311,7 +335,7 @@ impl UploadPool {
 
             unsafe { device.cmd_copy_buffer2(buffer.cmd_buf, &copy_info) };
 
-            if buf_copy.dst_queue_family == device.transfer_queue_family_index() {
+            if buf_copy.dst_queue_family == device.upload_queue().family().as_u32() {
                 // Barrier would have no effect.
                 continue;
             }
@@ -329,7 +353,7 @@ impl UploadPool {
                     .src_access_mask(vk::AccessFlags2::empty())
                     .dst_access_mask(vk::AccessFlags2::empty())
                     // TODO
-                    .src_queue_family_index(device.transfer_queue_family_index())
+                    .src_queue_family_index(upload_queue.family().as_u32())
                     .dst_queue_family_index(buf_copy.dst_queue_family)
                     .buffer(buf_copy.dst_handle)
                     .offset(buf_copy.dst_offset)
@@ -377,31 +401,35 @@ impl UploadPool {
             // Submit the command buffer. The availability fence will be signaled when all transfer
             // destination resources have been released to the destination queues.
             device
-                .transfer_queue()
+                .upload_queue()
                 .submit2(&[submit_info], Some(self.available[idx]))
                 .unwrap();
         }
     }
 
+    /// Records a buffer copy operation, returning an upload key.
+    ///
+    /// If there is not enough space in the active upload buffer to copy the data in `src`, this
+    /// method returns a [`CapacityError`].
     pub unsafe fn copy_bytes_to_buffer(
         &mut self,
-        device: &Device,
         src: &[u8],
-        alignment: usize,
         dst: vk::Buffer,
         dst_queue_family_index: u32,
     ) -> Result<UploadKey, CapacityError> {
         let idx = match self.current {
             Some(i) => i,
             None => {
-                let i = self.wait_any_available(device);
-                self.begin_buffer(device, i);
+                let i = self.wait_any_available();
+                self.begin_buffer(i);
                 i
             }
         };
 
         let buf = &mut self.buffers[idx];
-        let layout = Layout::from_size_align(src.len(), alignment).unwrap();
+
+        // Align all copy ranges to 4 byte boundaries.
+        let layout = Layout::from_size_align(src.len(), 4).unwrap();
         let dst = UploadDst {
             handle: dst,
             queue_family: dst_queue_family_index,

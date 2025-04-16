@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::arena::{self, Arena, ArenaMap};
 
-type EdgeKey<V> = arena::Key<Edge<V>>;
+pub(crate) type EdgeKey<V> = arena::Key<Edge<V>>;
 
 pub(crate) struct DepGraph<V, E> {
     nodes: Arena<V>,
@@ -129,7 +129,7 @@ where
     }
 }
 
-struct Edge<V> {
+pub(crate) struct Edge<V> {
     src: arena::Key<V>,
     dst: arena::Key<V>,
 }

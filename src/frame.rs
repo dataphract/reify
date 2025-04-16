@@ -50,7 +50,7 @@ impl FrameResources {
 
         let graphics_pool_info = vk::CommandPoolCreateInfo::default()
             .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-            .queue_family_index(device.queue_family_index());
+            .queue_family_index(device.graphics_queue().family().as_u32());
 
         unsafe {
             let context_available = device
@@ -58,33 +58,21 @@ impl FrameResources {
                 .expect("failed to create context_available fence");
 
             device
-                .set_debug_utils_object_name(
-                    &vk::DebugUtilsObjectNameInfoEXT::default()
-                        .object_handle(context_available)
-                        .object_name(c"context_available"),
-                )
+                .set_debug_utils_object_name(context_available, c"context_available")
                 .unwrap();
 
             let image_available = device
                 .create_semaphore(&semaphore_create_info)
                 .expect("failed to create image_available semaphore");
             device
-                .set_debug_utils_object_name(
-                    &vk::DebugUtilsObjectNameInfoEXT::default()
-                        .object_handle(image_available)
-                        .object_name(c"image_available"),
-                )
+                .set_debug_utils_object_name(image_available, c"image_available")
                 .unwrap();
 
             let render_complete = device
                 .create_semaphore(&semaphore_create_info)
                 .expect("failed to create render_complete semaphore");
             device
-                .set_debug_utils_object_name(
-                    &vk::DebugUtilsObjectNameInfoEXT::default()
-                        .object_handle(render_complete)
-                        .object_name(c"render_complete"),
-                )
+                .set_debug_utils_object_name(render_complete, c"render_complete")
                 .unwrap();
 
             let command_pool = device
@@ -223,8 +211,8 @@ impl<'frame> FrameContext<'frame> {
             //
             // Release ownership from graphics queue to present queue. If the queues are the
             // same, no ownership transfer occurs.
-            .src_queue_family_index(device.queue_family_index())
-            .dst_queue_family_index(device.queue_family_index())
+            .src_queue_family_index(device.graphics_queue().family().as_u32())
+            .dst_queue_family_index(device.graphics_queue().family().as_u32())
             .image(self.attached.image)
             .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL);
 
@@ -265,7 +253,7 @@ impl<'frame> FrameContext<'frame> {
         // Submit the command buffer.
         unsafe {
             device
-                .queue()
+                .graphics_queue()
                 .submit2(submit_infos, Some(signal_fence))
                 .unwrap()
         };
@@ -283,7 +271,7 @@ impl<'frame> FrameContext<'frame> {
 
         unsafe {
             device
-                .queue()
+                .graphics_queue()
                 .present(&present_info)
                 .expect("failed to present swapchain image");
         }
