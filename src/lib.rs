@@ -14,7 +14,7 @@ mod display;
 pub use display::{Display, DisplayInfo};
 
 mod graph;
-pub use graph::{Graph, GraphBuilder, GraphImageInfo};
+pub use graph::{builder::GraphBuilder, Graph, GraphImageInfo};
 
 mod instance;
 pub use instance::instance;
