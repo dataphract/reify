@@ -1,3 +1,5 @@
+//! Generic dependency graph.
+
 use std::collections::{HashMap, VecDeque};
 
 use crate::arena::{self, Arena, ArenaMap};

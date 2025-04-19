@@ -1,11 +1,17 @@
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    sync::Arc,
+};
 
 use ash::vk;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
-    graph::{Dependency, Graph, GraphImage, GraphImageInfo, GraphKey, GraphNode, ImageDependency},
+    graph::{
+        Dependency, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, GraphNode,
+        ImageDependency,
+    },
     RenderPass, RenderPassBuilder,
 };
 
@@ -138,11 +144,13 @@ impl GraphBuilder {
         let node_order = deps.toposort_reverse();
 
         Graph {
-            swapchain_image: final_image,
-            _image_info: self.images,
-            graph: deps,
-            graph_order: node_order,
-            nodes: self.nodes,
+            inner: Arc::new(GraphInner {
+                swapchain_image: final_image,
+                _image_info: self.images,
+                graph: deps,
+                graph_order: node_order,
+                nodes: self.nodes,
+            }),
         }
     }
 

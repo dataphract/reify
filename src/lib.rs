@@ -1,3 +1,5 @@
+//! Reify, a data-oriented rendering framework.
+
 use std::sync::OnceLock;
 
 use ash::{khr, vk};

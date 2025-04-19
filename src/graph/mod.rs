@@ -1,4 +1,4 @@
-use std::{any::Any, ffi::CString};
+use std::{any::Any, ffi::CString, sync::Arc};
 
 use ash::vk;
 
@@ -11,7 +11,12 @@ use crate::{
 
 pub(crate) mod builder;
 
+#[derive(Clone)]
 pub struct Graph {
+    inner: Arc<GraphInner>,
+}
+
+struct GraphInner {
     swapchain_image: GraphImage,
 
     _image_info: Arena<GraphImageInfo>,
@@ -29,11 +34,11 @@ impl Graph {
 
         let mut image_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
 
-        for &dep_key in self.graph_order.iter() {
-            let node_key = self.graph.node(dep_key);
-            let node = &self.nodes[*node_key];
+        for &dep_key in self.inner.graph_order.iter() {
+            let node_key = self.inner.graph.node(dep_key);
+            let node = &self.inner.nodes[*node_key];
 
-            for dep in self.graph.outgoing_deps(dep_key) {
+            for dep in self.inner.graph.outgoing_deps(dep_key) {
                 for img in &dep.images {
                     image_barriers.push(self.image_barrier(cx, img));
                 }
@@ -71,12 +76,12 @@ impl Graph {
             // TODO
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .image(if img.image == self.swapchain_image {
+            .image(if img.image == self.inner.swapchain_image {
                 cx.swapchain_image().image
             } else {
                 todo!("load from context")
             })
-            .subresource_range(if img.image == self.swapchain_image {
+            .subresource_range(if img.image == self.inner.swapchain_image {
                 IMAGE_SUBRESOURCE_RANGE_FULL
             } else {
                 todo!("load from context")
