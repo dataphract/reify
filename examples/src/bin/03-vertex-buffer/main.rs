@@ -3,14 +3,13 @@ use std::{ffi::CString, mem};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use examples::GlslCompiler;
-use naga::front::glsl;
 
 fn main() {
     examples::AppRunner::<VertexBufferApp>::new().run();
 }
 
 struct VertexBufferApp {
-    graph: reify2::Graph,
+    runtime: reify2::Runtime,
 }
 
 #[derive(Copy, Clone, Debug, Zeroable, Pod)]
@@ -82,12 +81,13 @@ impl examples::App for VertexBufferApp {
             .build();
 
         let graph = graph.build(swapchain_image);
+        let runtime = reify2::Runtime::new(graph);
 
-        VertexBufferApp { graph }
+        VertexBufferApp { runtime }
     }
 
     fn render(&self, cx: &mut reify2::FrameContext) {
-        self.graph.execute(cx);
+        self.runtime.execute(cx);
     }
 }
 

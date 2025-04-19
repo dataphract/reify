@@ -8,7 +8,7 @@ fn main() {
 }
 
 struct TriangleApp {
-    graph: reify2::Graph,
+    runtime: reify2::Runtime,
 }
 
 struct TriangleRenderPass {
@@ -154,12 +154,13 @@ void main() {
             .build();
 
         let graph = graph.build(swapchain_image);
+        let runtime = reify2::Runtime::new(graph);
 
-        TriangleApp { graph }
+        TriangleApp { runtime }
     }
 
     fn render(&self, cx: &mut reify2::FrameContext) {
-        self.graph.execute(cx);
+        self.runtime.execute(cx);
     }
 }
 

@@ -5,11 +5,13 @@ use ash::vk;
 use crate::{
     arena::{self, Arena},
     depgraph::DepGraph,
-    misc::IMAGE_SUBRESOURCE_RANGE_FULL,
     FrameContext,
 };
 
 pub(crate) mod builder;
+
+pub(crate) mod runtime;
+pub use self::runtime::Runtime;
 
 #[derive(Clone)]
 pub struct Graph {
@@ -28,64 +30,24 @@ struct GraphInner {
 }
 
 impl Graph {
-    pub fn execute(&self, cx: &mut FrameContext) {
-        let device = cx.device().clone();
-        let cmdbuf = cx.command_buffer();
-
-        let mut image_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
-
-        for &dep_key in self.inner.graph_order.iter() {
-            let node_key = self.inner.graph.node(dep_key);
-            let node = &self.inner.nodes[*node_key];
-
-            for dep in self.inner.graph.outgoing_deps(dep_key) {
-                for img in &dep.images {
-                    image_barriers.push(self.image_barrier(cx, img));
-                }
-            }
-
-            let deps = vk::DependencyInfo::default()
-                .dependency_flags(vk::DependencyFlags::empty())
-                .memory_barriers(&[])
-                // TODO
-                // .buffer_memory_barriers(&buffer_barriers)
-                .image_memory_barriers(&image_barriers);
-
-            unsafe {
-                device.cmd_pipeline_barrier2(cmdbuf, &deps);
-
-                cx.enter_debug_span(&node.node.debug_label(), [1.0, 0.6, 0.6, 1.0]);
-                node.node.execute(cx);
-                cx.exit_debug_span();
-            }
-        }
-    }
-
     fn image_barrier(
         &self,
-        cx: &FrameContext,
-        img: &ImageDependency,
+        dep: &ImageDependency,
+        img: vk::Image,
+        range: vk::ImageSubresourceRange,
     ) -> vk::ImageMemoryBarrier2<'_> {
         vk::ImageMemoryBarrier2::default()
-            .src_stage_mask(img.src_stage_mask)
-            .src_access_mask(img.src_access_mask)
-            .dst_stage_mask(img.dst_stage_mask)
-            .dst_access_mask(img.dst_access_mask)
-            .old_layout(img.old_layout)
-            .new_layout(img.new_layout)
+            .src_stage_mask(dep.src_stage_mask)
+            .src_access_mask(dep.src_access_mask)
+            .dst_stage_mask(dep.dst_stage_mask)
+            .dst_access_mask(dep.dst_access_mask)
+            .old_layout(dep.old_layout)
+            .new_layout(dep.new_layout)
             // TODO
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .image(if img.image == self.inner.swapchain_image {
-                cx.swapchain_image().image
-            } else {
-                todo!("load from context")
-            })
-            .subresource_range(if img.image == self.inner.swapchain_image {
-                IMAGE_SUBRESOURCE_RANGE_FULL
-            } else {
-                todo!("load from context")
-            })
+            .image(img)
+            .subresource_range(range)
     }
 }
 

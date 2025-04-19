@@ -3,7 +3,7 @@ fn main() {
 }
 
 struct ClearScreenApp {
-    graph: reify2::Graph,
+    runtime: reify2::Runtime,
 }
 
 struct ClearScreenPass {
@@ -48,11 +48,12 @@ impl examples::App for ClearScreenApp {
             .build();
 
         let graph = graph.build(swapchain_image);
+        let runtime = reify2::Runtime::new(graph);
 
-        ClearScreenApp { graph }
+        ClearScreenApp { runtime }
     }
 
     fn render(&self, cx: &mut reify2::FrameContext) {
-        self.graph.execute(cx);
+        self.runtime.execute(cx);
     }
 }
