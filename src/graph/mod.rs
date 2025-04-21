@@ -23,14 +23,17 @@ struct GraphInner {
 
     _image_info: Arena<GraphImageInfo>,
 
-    graph: DepGraph<GraphKey, Dependency>,
+    graph: DepGraph<GraphKey, NodeDependency>,
     graph_order: Vec<arena::Key<GraphKey>>,
 
     nodes: Arena<GraphNode>,
 }
 
 impl Graph {
-    fn node_dependencies(&self, node: arena::Key<GraphKey>) -> impl Iterator<Item = &Dependency> {
+    fn node_dependencies(
+        &self,
+        node: arena::Key<GraphKey>,
+    ) -> impl Iterator<Item = &NodeDependency> {
         self.inner.graph.outgoing_deps(node)
     }
 
@@ -118,8 +121,9 @@ pub struct GraphImageInfo {
     pub extent: vk::Extent2D,
 }
 
+/// A dependency between render graph nodes.
 #[derive(Default)]
-struct Dependency {
+struct NodeDependency {
     images: Vec<ImageDependency>,
 }
 

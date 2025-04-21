@@ -9,8 +9,8 @@ use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     graph::{
-        Dependency, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, GraphNode,
-        ImageAccess, ImageAccesses, ImageDependency,
+        Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, GraphNode, ImageAccess,
+        ImageAccesses, ImageDependency, NodeDependency,
     },
     RenderPass, RenderPassBuilder,
 };
@@ -51,7 +51,7 @@ impl GraphBuilder {
         //   by node B before A has finished its reads.
 
         // Insert memory dependencies.
-        let mut deps: DepGraph<GraphKey, Dependency> = DepGraph::default();
+        let mut deps: DepGraph<GraphKey, NodeDependency> = DepGraph::default();
         let mut next_depth = Vec::new();
         let mut cur_depth = HashSet::new();
         let mut consumers: HashMap<GraphKey, Vec<GraphImage>> = HashMap::new();
