@@ -30,6 +30,10 @@ struct GraphInner {
 }
 
 impl Graph {
+    fn node_dependencies(&self, node: arena::Key<GraphKey>) -> impl Iterator<Item = &Dependency> {
+        self.inner.graph.outgoing_deps(node)
+    }
+
     fn image_barrier(
         &self,
         dep: &ImageDependency,
@@ -127,4 +131,56 @@ struct ImageDependency {
     dst_access_mask: vk::AccessFlags2,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
+}
+
+impl ImageDependency {
+    /// Creates a dependency to synchronize a write after a read.
+    fn after_read(
+        image: GraphImage,
+        reader: &ImageAccess,
+        writer: &ImageAccess,
+    ) -> ImageDependency {
+        ImageDependency {
+            image,
+            src_stage_mask: reader.stage_mask,
+            dst_stage_mask: writer.stage_mask,
+            src_access_mask: vk::AccessFlags2::empty(),
+            dst_access_mask: vk::AccessFlags2::empty(),
+            old_layout: reader.layout,
+            new_layout: writer.layout,
+        }
+    }
+
+    /// Creates a dependency to synchronize a write followed by a read or write.
+    fn after_write(writer: &OutputImage, reader: &ImageAccess) -> ImageDependency {
+        ImageDependency {
+            image: writer.resource,
+            src_stage_mask: writer.stage_mask,
+            dst_stage_mask: reader.stage_mask,
+            src_access_mask: writer.access_mask,
+            dst_access_mask: reader.access_mask,
+            old_layout: writer.layout,
+            new_layout: reader.layout,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ImageAccesses {
+    produced_by: Option<ImageAccess>,
+    read_by: Vec<ImageAccess>,
+    consumed_by: Option<ImageAccess>,
+}
+
+/// A record of a single image access.
+#[derive(Debug)]
+struct ImageAccess {
+    /// The key of the node that performs the access.
+    node_key: GraphKey,
+    /// The stage in which the access occurs.
+    stage_mask: vk::PipelineStageFlags2,
+    /// The access type of the access.
+    access_mask: vk::AccessFlags2,
+    /// The required layout of the image when the access is performed.
+    layout: vk::ImageLayout,
 }

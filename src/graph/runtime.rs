@@ -1,14 +1,34 @@
+use std::collections::HashMap;
+
 use ash::vk;
 
-use crate::{graph::Graph, misc::IMAGE_SUBRESOURCE_RANGE_FULL, FrameContext};
+use crate::{
+    graph::{Graph, GraphImage},
+    misc::IMAGE_SUBRESOURCE_RANGE_FULL,
+    FrameContext,
+};
 
 pub struct Runtime {
     graph: Graph,
+
+    // TODO: replace these hashmaps with arenas keyed on GraphImage
+
+    // User-specified bindings to graph images.
+    //
+    // The default is ImageBinding::Transient, i.e., the runtime will allocate an image to use.
+    bindings: HashMap<GraphImage, ImageBinding>,
+
+    // Physical resource associated with each graph image.
+    resolved: HashMap<GraphImage, ResolvedImage>,
 }
 
 impl Runtime {
     pub fn new(graph: Graph) -> Runtime {
-        Runtime { graph }
+        Runtime {
+            graph,
+            bindings: HashMap::new(),
+            resolved: HashMap::new(),
+        }
     }
 
     pub fn execute(&self, cx: &mut FrameContext) {
@@ -21,16 +41,21 @@ impl Runtime {
             let node_key = self.graph.inner.graph.node(dep_key);
             let node = &self.graph.inner.nodes[*node_key];
 
-            for dep in self.graph.inner.graph.outgoing_deps(dep_key) {
+            // Synchronize all resource dependencies.
+            for dep in self.graph.node_dependencies(dep_key) {
                 for img_dep in &dep.images {
                     let img: vk::Image;
                     let range: vk::ImageSubresourceRange;
 
-                    if img_dep.image == self.graph.inner.swapchain_image {
-                        img = cx.swapchain_image().image;
-                        range = IMAGE_SUBRESOURCE_RANGE_FULL;
-                    } else {
-                        todo!("load from context")
+                    match self
+                        .resolved
+                        .get(&img_dep.image)
+                        .expect("image not resolved")
+                    {
+                        ResolvedImage::Swapchain => {
+                            img = cx.swapchain_image().image;
+                            range = IMAGE_SUBRESOURCE_RANGE_FULL;
+                        }
                     }
 
                     image_barriers.push(self.graph.image_barrier(img_dep, img, range));
@@ -53,4 +78,15 @@ impl Runtime {
             }
         }
     }
+}
+
+#[derive(Default)]
+enum ImageBinding {
+    #[default]
+    Transient,
+    Swapchain,
+}
+
+enum ResolvedImage {
+    Swapchain,
 }

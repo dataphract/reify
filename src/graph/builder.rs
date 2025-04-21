@@ -10,7 +10,7 @@ use crate::{
     depgraph::DepGraph,
     graph::{
         Dependency, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, GraphNode,
-        ImageDependency,
+        ImageAccess, ImageAccesses, ImageDependency,
     },
     RenderPass, RenderPassBuilder,
 };
@@ -101,15 +101,7 @@ impl GraphBuilder {
 
                         deps.edge_mut_or_default(src_key, dst_key)
                             .images
-                            .push(ImageDependency {
-                                image: output.resource,
-                                src_stage_mask: output.stage_mask,
-                                dst_stage_mask: dependent.stage_mask,
-                                src_access_mask: output.access_mask,
-                                dst_access_mask: dependent.access_mask,
-                                old_layout: output.layout,
-                                new_layout: dependent.layout,
-                            });
+                            .push(ImageDependency::after_write(output, dependent));
                     }
                 }
             }
@@ -128,15 +120,7 @@ impl GraphBuilder {
 
                     deps.edge_mut_or_default(consumer_key, reader_key)
                         .images
-                        .push(ImageDependency {
-                            image: consumed_key,
-                            src_stage_mask: reader.stage_mask,
-                            dst_stage_mask: consumer.stage_mask,
-                            src_access_mask: vk::AccessFlags2::empty(),
-                            dst_access_mask: vk::AccessFlags2::empty(),
-                            old_layout: reader.layout,
-                            new_layout: consumer.layout,
-                        });
+                        .push(ImageDependency::after_read(consumed_key, reader, consumer));
                 }
             }
         }
@@ -222,24 +206,4 @@ impl GraphBuilder {
     {
         RenderPassBuilder::new(self, render_pass)
     }
-}
-
-#[derive(Debug, Default)]
-struct ImageAccesses {
-    produced_by: Option<ImageAccess>,
-    read_by: Vec<ImageAccess>,
-    consumed_by: Option<ImageAccess>,
-}
-
-/// A record of a single image access.
-#[derive(Debug)]
-struct ImageAccess {
-    /// The key of the node that performs the access.
-    node_key: GraphKey,
-    /// The stage in which the access occurs.
-    stage_mask: vk::PipelineStageFlags2,
-    /// The access type of the access.
-    access_mask: vk::AccessFlags2,
-    /// The required layout of the image when the access is performed.
-    layout: vk::ImageLayout,
 }
