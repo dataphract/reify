@@ -29,16 +29,14 @@ impl reify2::RenderPass for ClearScreenPass {
 }
 
 impl examples::App for ClearScreenApp {
-    fn create_app(_device: &reify2::Device, _display_info: &reify2::DisplayInfo) -> ClearScreenApp {
+    fn create_app(_device: &reify2::Device, display_info: &reify2::DisplayInfo) -> ClearScreenApp {
         let mut graph = reify2::GraphBuilder::new();
 
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
             reify2::GraphImageInfo {
-                // Infer format.
-                format: None,
-                // Infer extent.
-                extent: None,
+                format: display_info.surface_format.format,
+                extent: display_info.image_extent,
             },
         );
 

@@ -114,8 +114,8 @@ pub type GraphImage = arena::Key<GraphImageInfo>;
 
 #[derive(Debug)]
 pub struct GraphImageInfo {
-    pub format: Option<vk::Format>,
-    pub extent: Option<vk::Extent2D>,
+    pub format: vk::Format,
+    pub extent: vk::Extent2D,
 }
 
 #[derive(Default)]

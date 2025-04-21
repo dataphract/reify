@@ -67,10 +67,8 @@ impl examples::App for VertexBufferApp {
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
             reify2::GraphImageInfo {
-                // Infer format.
-                format: None,
-                // Infer extent.
-                extent: None,
+                format: display_info.surface_format.format,
+                extent: display_info.image_extent,
             },
         );
 
