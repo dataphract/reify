@@ -1,7 +1,8 @@
 use std::ffi::CString;
 
 use ash::vk;
-use naga::front::glsl;
+use examples::GlslCompiler;
+use naga::{front::glsl, ShaderStage};
 
 fn main() {
     examples::AppRunner::<TriangleApp>::new().run();
@@ -111,24 +112,9 @@ void main() {
 }
 "#;
 
-        let mut glsl_front = glsl::Frontend::default();
-        let mut validator = naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        );
-
-        let vert_spv = compile_shader(
-            &mut glsl_front,
-            &mut validator,
-            naga::ShaderStage::Vertex,
-            vert_src,
-        );
-        let frag_spv = compile_shader(
-            &mut glsl_front,
-            &mut validator,
-            naga::ShaderStage::Fragment,
-            frag_src,
-        );
+        let mut glslc = GlslCompiler::new();
+        let vert_spv = glslc.compile(ShaderStage::Vertex, vert_src);
+        let frag_spv = glslc.compile(ShaderStage::Fragment, frag_src);
 
         let triangle_pipeline = TrianglePipeline {
             color_format: display_info.surface_format.format,
@@ -160,38 +146,4 @@ void main() {
     fn render(&mut self, cx: &mut reify2::FrameContext) {
         self.runtime.execute(cx);
     }
-}
-
-fn compile_shader(
-    front: &mut naga::front::glsl::Frontend,
-    validator: &mut naga::valid::Validator,
-    stage: naga::ShaderStage,
-    src: &str,
-) -> Vec<u32> {
-    let parsed = front
-        .parse(
-            &glsl::Options {
-                stage,
-                defines: Default::default(),
-            },
-            src,
-        )
-        .unwrap();
-
-    let info = validator.validate(&parsed).unwrap();
-    let spv_back_options = naga::back::spv::Options {
-        lang_version: (1, 6),
-        ..Default::default()
-    };
-
-    naga::back::spv::write_vec(
-        &parsed,
-        &info,
-        &spv_back_options,
-        Some(&naga::back::spv::PipelineOptions {
-            shader_stage: stage,
-            entry_point: "main".into(),
-        }),
-    )
-    .unwrap()
 }
