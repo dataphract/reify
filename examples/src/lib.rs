@@ -89,15 +89,35 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
             WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::RedrawRequested => {
-                let mut cx = self
+                let mut acquire = self
                     .display
                     .as_mut()
                     .unwrap()
                     .acquire_frame_context(&self.device);
 
-                self.app.as_mut().unwrap().render(&mut cx);
+                match acquire {
+                    Ok(mut cx) => {
+                        self.app.as_mut().unwrap().render(&mut cx);
+                        cx.submit_and_present(&self.device);
+                    }
 
-                cx.submit_and_present(&self.device);
+                    Err(_) => {
+                        // Recreate display and try again.
+                        let inner_size = self.window.as_ref().unwrap().inner_size();
+                        let extent = vk::Extent2D {
+                            width: inner_size.width,
+                            height: inner_size.height,
+                        };
+
+                        unsafe {
+                            self.display
+                                .as_mut()
+                                .unwrap()
+                                .recreate(&self.device, extent)
+                        };
+                    }
+                }
+
                 self.window.as_ref().unwrap().request_redraw();
             }
             _ => (),

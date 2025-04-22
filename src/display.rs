@@ -21,8 +21,15 @@ pub struct SwapchainImage {
 }
 
 impl SwapchainImage {
+    #[inline]
     pub fn view(&self) -> vk::ImageView {
         self.view
+    }
+
+    #[inline]
+    pub unsafe fn destroy(self, device: &Device) {
+        // The vk::Image itself is owned by the swapchain, so only destroy the view.
+        unsafe { device.destroy_image_view(self.view) }
     }
 }
 
@@ -34,7 +41,7 @@ pub struct DisplayInfo {
 }
 
 pub struct Display {
-    info: DisplayInfo,
+    info: Option<DisplayInfo>,
 
     current_frame: usize,
 
@@ -43,7 +50,7 @@ pub struct Display {
     _image_frames: Vec<Option<usize>>,
 
     swapchain: Option<vk::SwapchainKHR>,
-    _surface: Option<vk::SurfaceKHR>,
+    surface: vk::SurfaceKHR,
 }
 
 impl Display {
@@ -53,9 +60,41 @@ impl Display {
         surface: vk::SurfaceKHR,
         phys_window_extent: vk::Extent2D,
     ) -> Display {
+        let mut display = Display {
+            info: None,
+            current_frame: 0,
+
+            frames: vec![],
+            images: vec![],
+            _image_frames: vec![],
+
+            swapchain: None,
+            surface,
+        };
+
+        unsafe { display.recreate(device, phys_window_extent) };
+
+        display
+    }
+
+    pub unsafe fn recreate(&mut self, device: &Device, phys_window_extent: vk::Extent2D) {
         let instance = crate::instance();
 
-        let (surf_caps, surf_formats, _surf_present_modes) = unsafe {
+        for frame in self.frames.drain(..) {
+            unsafe { frame.destroy(device) };
+        }
+
+        for img in self.images.drain(..) {
+            unsafe { img.destroy(device) };
+        }
+
+        self._image_frames.clear();
+
+        let surf_caps;
+        let surf_formats;
+        let _surf_present_modes;
+
+        unsafe {
             let phys = device.physical_device().raw();
 
             let surface_supported = instance
@@ -63,7 +102,7 @@ impl Display {
                 .get_physical_device_surface_support(
                     phys,
                     device.graphics_queue().family().as_u32(),
-                    surface,
+                    self.surface,
                 )
                 .expect("failed to verify physical device surface support");
 
@@ -71,20 +110,18 @@ impl Display {
                 panic!("Surface not supported with this device.");
             }
 
-            (
-                instance
-                    .khr_surface()
-                    .get_physical_device_surface_capabilities(phys, surface)
-                    .expect("failed to query surface capabilities"),
-                instance
-                    .khr_surface()
-                    .get_physical_device_surface_formats(phys, surface)
-                    .expect("failed to query surface formats"),
-                instance
-                    .khr_surface()
-                    .get_physical_device_surface_present_modes(phys, surface)
-                    .expect("failed to query surface presentation modes"),
-            )
+            surf_caps = instance
+                .khr_surface()
+                .get_physical_device_surface_capabilities(phys, self.surface)
+                .expect("failed to query surface capabilities");
+            surf_formats = instance
+                .khr_surface()
+                .get_physical_device_surface_formats(phys, self.surface)
+                .expect("failed to query surface formats");
+            _surf_present_modes = instance
+                .khr_surface()
+                .get_physical_device_surface_present_modes(phys, self.surface)
+                .expect("failed to query surface presentation modes");
         };
 
         let min_image_count = {
@@ -109,6 +146,8 @@ impl Display {
         );
 
         // Prefer BGRA sRGB if available.
+        //
+        // TODO(dp): this doesn't make sense on all platforms
         let surface_format = *surf_formats
             .iter()
             .find(|sf| {
@@ -134,7 +173,7 @@ impl Display {
         let present_mode = vk::PresentModeKHR::FIFO;
 
         let create_info = vk::SwapchainCreateInfoKHR::default()
-            .surface(surface)
+            .surface(self.surface)
             .min_image_count(min_image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -147,10 +186,11 @@ impl Display {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
             .clipped(true)
-            .old_swapchain(vk::SwapchainKHR::null());
+            .old_swapchain(self.swapchain.unwrap_or_else(vk::SwapchainKHR::null));
 
         let swapchain =
             unsafe { device.create_swapchain(&create_info) }.expect("failed to create swapchain");
+        self.swapchain = Some(swapchain);
 
         log::info!("Created swapchain.");
 
@@ -199,37 +239,26 @@ impl Display {
             })
             .collect::<Vec<_>>();
 
-        let info = DisplayInfo {
+        self.info = Some(DisplayInfo {
             min_image_count,
             surface_format,
             image_extent,
             present_mode,
-        };
+        });
 
-        let mut frames = Vec::new();
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
-            frames.push(FrameResources::create(device));
+            self.frames.push(FrameResources::create(device));
         }
 
-        let mut image_frames = Vec::with_capacity(swapchain_images.len());
-        image_frames.resize(swapchain_images.len(), None);
+        self._image_frames.resize(swapchain_images.len(), None);
 
-        Display {
-            info,
-            current_frame: 0,
-            frames,
-            images: swapchain_images,
-            _image_frames: image_frames,
-            swapchain: Some(swapchain),
-            _surface: Some(surface),
-            // context: context.clone(),
-        }
+        self.images = swapchain_images;
     }
 
     pub fn acquire_frame_context<'frame>(
         &'frame mut self,
         device: &Device,
-    ) -> FrameContext<'frame> {
+    ) -> Result<FrameContext<'frame>, AcquireError<'frame>> {
         let frame_idx = self.current_frame % MAX_FRAMES_IN_FLIGHT;
         let frame = &mut self.frames[frame_idx];
 
@@ -242,24 +271,44 @@ impl Display {
             .fence(vk::Fence::null())
             .device_mask(1);
 
-        let (acquired, is_suboptimal) = unsafe { device.acquire_next_image_2(&acquire_info) }
-            .expect("failed to acquire next swapchain image");
+        let (acquired, is_suboptimal) = match unsafe { device.acquire_next_image_2(&acquire_info) }
+        {
+            Ok((a, s)) => (a, s),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(AcquireError::OutOfDate),
+            Err(e) => panic!("failed to acquire next swapchain image: {e:?}"),
+        };
+
+        let frame_cx = frame_cx.attach(
+            device,
+            self.info.as_ref().unwrap(),
+            self.swapchain.unwrap(),
+            &mut self.images[acquired as usize],
+        );
 
         if is_suboptimal {
             log::warn!("swapchain image is suboptimal");
+            return Err(AcquireError::Suboptimal(frame_cx));
         }
 
-        frame_cx.attach(
-            device,
-            &self.info,
-            self.swapchain.unwrap(),
-            &mut self.images[acquired as usize],
-        )
+        Ok(frame_cx)
     }
 
     pub fn info(&self) -> &DisplayInfo {
-        &self.info
+        &self.info.as_ref().unwrap()
     }
+}
+
+/// An error that may be returned by [`Display::acquire_frame_context`].
+pub enum AcquireError<'frame> {
+    /// The swapchain is suboptimal for the current window surface.
+    ///
+    /// The provided frame context can still be used for rendering, but the application should
+    /// recreate the [`Display`].
+    Suboptimal(FrameContext<'frame>),
+    /// The swapchain is incompatible with the window surface.
+    ///
+    /// The application must recreate the [`Display`] in order to render.
+    OutOfDate,
 }
 
 type PhantomUnSend = PhantomData<UnSend>;

@@ -112,6 +112,30 @@ impl FrameResources {
                 .map(|_| AvailableFrameContext { frame: self })
         }
     }
+
+    /// Destroys the frame context.
+    #[tracing::instrument(skip_all)]
+    pub unsafe fn destroy(self, device: &Device) {
+        let FrameResources {
+            context_available,
+            image_available,
+            all_commands_complete,
+            command_pool,
+            commands: _,
+        } = self;
+
+        unsafe {
+            device
+                .wait_for_fences(&[context_available], true, timeout_u64(None))
+                .expect("fence wait failed");
+
+            device.graphics_queue().wait_idle();
+
+            device.destroy_semaphore(image_available);
+            device.destroy_semaphore(all_commands_complete);
+            device.destroy_command_pool(command_pool);
+        }
+    }
 }
 
 /// A `FrameContext` that is available for use, with no attached swapchain image.

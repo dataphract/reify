@@ -326,6 +326,10 @@ impl Device {
         unsafe { self.storage().khr_swapchain.get_swapchain_images(swapchain) }
     }
 
+    unsafe fn queue_wait_idle(&self, queue: vk::Queue) -> VkResult<()> {
+        unsafe { DEVICE.get().unwrap().raw.queue_wait_idle(queue) }
+    }
+
     #[allow(clippy::missing_safety_doc)]
     pub unsafe fn set_debug_utils_object_name<T: Handle>(
         &self,
@@ -722,6 +726,16 @@ impl Queue {
             queue: self.clone(),
             timeline_value,
         })
+    }
+
+    pub unsafe fn wait_idle(&self) {
+        let queue_guard = self.storage().handle.lock().unwrap();
+
+        unsafe {
+            self.device()
+                .queue_wait_idle(*queue_guard)
+                .expect("wait_idle failed")
+        };
     }
 }
 
