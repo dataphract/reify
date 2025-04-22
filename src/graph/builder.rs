@@ -55,7 +55,7 @@ impl GraphBuilder {
         let mut next_depth = Vec::new();
         let mut cur_depth = HashSet::new();
         let mut consumers: HashMap<GraphKey, Vec<GraphImage>> = HashMap::new();
-        let mut builder_to_compiled: ArenaMap<GraphKey, arena::Key<GraphKey>> = ArenaMap::default();
+        let mut arena_to_depgraph: ArenaMap<GraphKey, arena::Key<GraphKey>> = ArenaMap::default();
 
         next_depth.push(final_node);
 
@@ -68,7 +68,7 @@ impl GraphBuilder {
                     continue;
                 }
 
-                builder_to_compiled.entry(builder_node).or_insert_with(|| {
+                arena_to_depgraph.entry(builder_node).or_insert_with(|| {
                     cur_depth.insert(builder_node);
                     deps.add_node(builder_node)
                 });
@@ -93,11 +93,11 @@ impl GraphBuilder {
                         .iter()
                         .chain(produced_access.consumed_by.as_ref())
                     {
-                        let Some(&src_key) = builder_to_compiled.get(dependent.node_key) else {
+                        let Some(&src_key) = arena_to_depgraph.get(dependent.node_key) else {
                             continue;
                         };
 
-                        let dst_key = builder_to_compiled[builder_key];
+                        let dst_key = arena_to_depgraph[builder_key];
 
                         deps.edge_mut_or_default(src_key, dst_key)
                             .images
@@ -108,13 +108,13 @@ impl GraphBuilder {
         }
 
         for (&consumer_key, consumeds) in consumers.iter() {
-            let consumer_key = builder_to_compiled[consumer_key];
+            let consumer_key = arena_to_depgraph[consumer_key];
 
             for &consumed_key in consumeds {
                 let access = &self.image_access[consumed_key];
                 let consumer = access.consumed_by.as_ref().unwrap();
                 for reader in &access.read_by {
-                    let Some(&reader_key) = builder_to_compiled.get(reader.node_key) else {
+                    let Some(&reader_key) = arena_to_depgraph.get(reader.node_key) else {
                         continue;
                     };
 
@@ -130,7 +130,9 @@ impl GraphBuilder {
         Graph {
             inner: Arc::new(GraphInner {
                 swapchain_image: final_image,
-                _image_info: self.images,
+                image_info: self.images,
+                image_access: self.image_access,
+                image_usage: self.image_usage,
                 graph: deps,
                 graph_order: node_order,
                 nodes: self.nodes,

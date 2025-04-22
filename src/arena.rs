@@ -80,6 +80,17 @@ impl<T> Arena<T> {
             _phantom: PhantomData,
         }
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Key<T>, &T)> {
+        self.items.iter().enumerate().map(|(index, item)| {
+            let key = Key {
+                index,
+                _phantom: PhantomData,
+            };
+
+            (key, item)
+        })
+    }
 }
 
 pub struct Key<T> {

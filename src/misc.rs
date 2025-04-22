@@ -20,3 +20,12 @@ pub fn timeout_u64(duration: Option<Duration>) -> u64 {
         .try_into()
         .expect("timeout duration in nanoseconds should be less than u64::MAX")
 }
+
+#[inline]
+pub fn extent_2d_to_3d(extent: vk::Extent2D) -> vk::Extent3D {
+    vk::Extent3D {
+        width: extent.width,
+        height: extent.height,
+        depth: 1,
+    }
+}

@@ -152,12 +152,12 @@ void main() {
             .build();
 
         let graph = graph.build(swapchain_image);
-        let runtime = reify2::Runtime::new(graph);
+        let runtime = reify2::Runtime::new(device.clone(), graph);
 
         TriangleApp { runtime }
     }
 
-    fn render(&self, cx: &mut reify2::FrameContext) {
+    fn render(&mut self, cx: &mut reify2::FrameContext) {
         self.runtime.execute(cx);
     }
 }

@@ -79,12 +79,12 @@ impl examples::App for VertexBufferApp {
             .build();
 
         let graph = graph.build(swapchain_image);
-        let runtime = reify2::Runtime::new(graph);
+        let runtime = reify2::Runtime::new(device.clone(), graph);
 
         VertexBufferApp { runtime }
     }
 
-    fn render(&self, cx: &mut reify2::FrameContext) {
+    fn render(&mut self, cx: &mut reify2::FrameContext) {
         self.runtime.execute(cx);
     }
 }

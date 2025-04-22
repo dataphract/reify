@@ -3,7 +3,7 @@ use std::{any::Any, ffi::CString, sync::Arc};
 use ash::vk;
 
 use crate::{
-    arena::{self, Arena},
+    arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     FrameContext,
 };
@@ -21,7 +21,10 @@ pub struct Graph {
 struct GraphInner {
     swapchain_image: GraphImage,
 
-    _image_info: Arena<GraphImageInfo>,
+    // TODO(dp): consolidate?
+    image_info: Arena<GraphImageInfo>,
+    image_access: ArenaMap<GraphImage, ImageAccesses>,
+    image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
 
     graph: DepGraph<GraphKey, NodeDependency>,
     graph_order: Vec<arena::Key<GraphKey>>,
