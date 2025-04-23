@@ -79,6 +79,7 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
         self.display = Some(display);
     }
 
+    #[tracing::instrument(skip_all)]
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,

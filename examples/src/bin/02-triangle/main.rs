@@ -2,7 +2,7 @@ use std::ffi::CString;
 
 use ash::vk;
 use examples::GlslCompiler;
-use naga::{front::glsl, ShaderStage};
+use naga::ShaderStage;
 
 fn main() {
     examples::AppRunner::<TriangleApp>::new().run();

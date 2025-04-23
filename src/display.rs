@@ -77,6 +77,7 @@ impl Display {
         display
     }
 
+    #[tracing::instrument(name = "Display::recreate", skip_all)]
     pub unsafe fn recreate(&mut self, device: &Device, phys_window_extent: vk::Extent2D) {
         let instance = crate::instance();
 
@@ -286,7 +287,6 @@ impl Display {
         );
 
         if is_suboptimal {
-            log::warn!("swapchain image is suboptimal");
             return Err(AcquireError::Suboptimal(frame_cx));
         }
 

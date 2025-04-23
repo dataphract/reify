@@ -311,6 +311,7 @@ impl Device {
     }
 
     #[allow(clippy::missing_safety_doc)]
+    #[tracing::instrument(name = "Device::create_swapchain", skip_all)]
     pub unsafe fn create_swapchain(
         &self,
         info: &vk::SwapchainCreateInfoKHR,
@@ -326,6 +327,7 @@ impl Device {
         unsafe { self.storage().khr_swapchain.get_swapchain_images(swapchain) }
     }
 
+    #[tracing::instrument(name = "Device::queue_wait_idle", skip_all)]
     unsafe fn queue_wait_idle(&self, queue: vk::Queue) -> VkResult<()> {
         unsafe { DEVICE.get().unwrap().raw.queue_wait_idle(queue) }
     }

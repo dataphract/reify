@@ -149,6 +149,7 @@ impl<'frame> AvailableFrameContext<'frame> {
         self.frame.image_available
     }
 
+    #[tracing::instrument(name = "AvailableFrameContext::attach", skip_all)]
     pub fn attach(
         self,
         device: &Device,
