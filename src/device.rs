@@ -327,6 +327,15 @@ impl Device {
         unsafe { self.storage().khr_swapchain.get_swapchain_images(swapchain) }
     }
 
+    pub unsafe fn free(&self, allocation: GpuAllocation) {
+        self.storage()
+            .allocator
+            .lock()
+            .unwrap()
+            .free(allocation)
+            .expect("failed to free allocation");
+    }
+
     #[tracing::instrument(name = "Device::queue_wait_idle", skip_all)]
     unsafe fn queue_wait_idle(&self, queue: vk::Queue) -> VkResult<()> {
         unsafe { DEVICE.get().unwrap().raw.queue_wait_idle(queue) }

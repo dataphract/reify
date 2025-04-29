@@ -1,14 +1,17 @@
-use std::{any::Any, ffi::CString, sync::Arc};
+use std::sync::Arc;
 
 use ash::vk;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
-    FrameContext,
 };
 
 pub(crate) mod builder;
+
+pub(crate) mod node;
+use self::node::OutputImage;
+pub use self::node::{BoxNode, Node};
 
 pub(crate) mod runtime;
 pub use self::runtime::Runtime;
@@ -29,10 +32,20 @@ struct GraphInner {
     graph: DepGraph<GraphKey, NodeDependency>,
     graph_order: Vec<arena::Key<GraphKey>>,
 
-    nodes: Arena<GraphNode>,
+    nodes: Arena<BoxNode>,
 }
 
 impl Graph {
+    #[inline]
+    pub fn swapchain_image(&self) -> GraphImage {
+        self.inner.swapchain_image
+    }
+
+    #[inline]
+    pub fn num_images(&self) -> usize {
+        self.inner.image_info.len()
+    }
+
     fn node_dependencies(
         &self,
         node: arena::Key<GraphKey>,
@@ -61,60 +74,7 @@ impl Graph {
     }
 }
 
-/// A trait for render graph nodes.
-///
-/// # Safety
-///
-/// Implementations are required to uphold Vulkan correctness requirements.
-///
-/// ...TODO
-pub unsafe trait Node: Any {
-    fn outputs(&self) -> NodeOutputs {
-        NodeOutputs { images: &[] }
-    }
-
-    /// Returns the label used to annotate this node's debug spans.
-    fn debug_label(&self) -> CString {
-        c"[unlabeled node]".into()
-    }
-
-    unsafe fn execute(&self, cx: &mut FrameContext) {
-        // Suppress unused param warning.
-        let _ = cx;
-    }
-}
-
-pub struct NodeOutputs<'node> {
-    pub images: &'node [OutputImage],
-}
-
-#[derive(Default)]
-pub(crate) struct OwnedNodeOutputs {
-    pub(crate) images: Vec<OutputImage>,
-}
-
-impl OwnedNodeOutputs {
-    pub fn as_node_outputs(&self) -> NodeOutputs {
-        NodeOutputs {
-            images: &self.images,
-        }
-    }
-}
-
-pub struct GraphNode {
-    pub(crate) node: Box<dyn Node>,
-}
-
-pub type GraphKey = arena::Key<GraphNode>;
-
-pub(crate) struct OutputImage {
-    pub(crate) resource: GraphImage,
-    pub(crate) consumed: Option<GraphImage>,
-    pub(crate) stage_mask: vk::PipelineStageFlags2,
-    pub(crate) access_mask: vk::AccessFlags2,
-    pub(crate) layout: vk::ImageLayout,
-    pub(crate) usage: vk::ImageUsageFlags,
-}
+pub type GraphKey = arena::Key<BoxNode>;
 
 pub type GraphImage = arena::Key<GraphImageInfo>;
 
@@ -177,6 +137,12 @@ struct ImageAccesses {
     produced_by: Option<ImageAccess>,
     read_by: Vec<ImageAccess>,
     consumed_by: Option<ImageAccess>,
+}
+
+impl ImageAccesses {
+    fn add_reader(&mut self, access: ImageAccess) {
+        self.read_by.push(access);
+    }
 }
 
 /// A record of a single image access.

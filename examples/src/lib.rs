@@ -1,5 +1,6 @@
 use ash::vk;
 use naga::{back, front, valid};
+use tracing_log::log;
 use tracing_subscriber::layer::SubscriberExt;
 use winit::{
     event::WindowEvent, event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11,
@@ -55,10 +56,8 @@ impl<A: App> AppRunner<A> {
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
         event_loop.run_app(self).unwrap();
     }
-}
 
-impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    pub fn create_window(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes()
             .with_title("reify2")
             .with_inner_size(winit::dpi::LogicalSize::new(1600, 900));
@@ -79,6 +78,47 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
         self.display = Some(display);
     }
 
+    pub fn redraw(&mut self) {
+        let acquire = self
+            .display
+            .as_mut()
+            .unwrap()
+            .acquire_frame_context(&self.device);
+
+        match acquire {
+            Ok(mut cx) => {
+                self.app.as_mut().unwrap().render(&mut cx);
+
+                cx.submit_and_present(&self.device);
+            }
+
+            Err(_) => self.recreate_display(),
+        }
+    }
+
+    pub fn recreate_display(&mut self) {
+        log::info!("recreate");
+        let inner_size = self.window.as_ref().unwrap().inner_size();
+        let extent = vk::Extent2D {
+            width: inner_size.width,
+            height: inner_size.height,
+        };
+
+        unsafe {
+            self.display
+                .as_mut()
+                .unwrap()
+                .recreate(&self.device, extent)
+        };
+    }
+}
+
+impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
+    #[inline]
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.create_window(event_loop);
+    }
+
     #[tracing::instrument(skip_all)]
     fn window_event(
         &mut self,
@@ -90,35 +130,7 @@ impl<A: App> winit::application::ApplicationHandler for AppRunner<A> {
             WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::RedrawRequested => {
-                let mut acquire = self
-                    .display
-                    .as_mut()
-                    .unwrap()
-                    .acquire_frame_context(&self.device);
-
-                match acquire {
-                    Ok(mut cx) => {
-                        self.app.as_mut().unwrap().render(&mut cx);
-                        cx.submit_and_present(&self.device);
-                    }
-
-                    Err(_) => {
-                        // Recreate display and try again.
-                        let inner_size = self.window.as_ref().unwrap().inner_size();
-                        let extent = vk::Extent2D {
-                            width: inner_size.width,
-                            height: inner_size.height,
-                        };
-
-                        unsafe {
-                            self.display
-                                .as_mut()
-                                .unwrap()
-                                .recreate(&self.device, extent)
-                        };
-                    }
-                }
-
+                self.redraw();
                 self.window.as_ref().unwrap().request_redraw();
             }
             _ => (),

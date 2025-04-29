@@ -81,7 +81,7 @@ impl reify2::GraphicsPipeline for TrianglePipeline {
         c"triangle_pipeline".into()
     }
 
-    fn execute(&self, pipe: &mut reify2::GraphicsPipelineInstance<'_, '_>) {
+    fn execute(&self, pipe: &mut reify2::GraphicsPipelineInstance) {
         pipe.draw(3, 0);
     }
 }
@@ -127,7 +127,7 @@ void main() {
             "swapchain_image".into(),
             reify2::GraphImageInfo {
                 format: display_info.surface_format.format,
-                extent: display_info.image_extent,
+                extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
         );
 

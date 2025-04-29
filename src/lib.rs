@@ -7,6 +7,8 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 
 mod arena;
 
+//mod blit;
+
 mod depgraph;
 
 mod device;
@@ -37,6 +39,8 @@ pub use render_pass::{
 
 mod transfer;
 pub use transfer::{UploadPool, UploadPoolInfo};
+
+mod transient;
 
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 

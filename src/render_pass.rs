@@ -3,8 +3,11 @@ use std::{collections::HashMap, ffi::CString};
 use ash::vk;
 
 use crate::{
-    graph::{GraphImage, GraphKey, GraphNode, Node, NodeOutputs, OutputImage, OwnedNodeOutputs},
-    Device, FrameContext, GraphBuilder,
+    graph::{
+        node::{NodeContext, NodeOutputs, OutputImage, OwnedNodeOutputs},
+        BoxNode, GraphImage, GraphKey, Node,
+    },
+    Device, GraphBuilder,
 };
 
 pub trait RenderPass {
@@ -56,7 +59,7 @@ where
             });
         }
 
-        self.graph.add_node(GraphNode {
+        self.graph.add_node(BoxNode {
             node: Box::new(RenderPassNode {
                 pass: self.pass,
                 _slots: self.slots,
@@ -139,30 +142,24 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
         self.pass.debug_label()
     }
 
-    unsafe fn execute(&self, cx: &mut FrameContext) {
+    unsafe fn execute(&self, cx: &mut NodeContext) {
         // TODO(dp): make method on ColorAttachmentInfo?
         let color_attachment_info = |att: &ColorAttachmentInfo| {
-            let (load_op, clear_color) = match att.load_op {
-                LoadOp::Load => (
-                    vk::AttachmentLoadOp::LOAD,
-                    vk::ClearColorValue { float32: [0.0; 4] },
-                ),
-                LoadOp::Clear(c) => (
-                    vk::AttachmentLoadOp::CLEAR,
-                    match c {
-                        ClearColor::Float(f) => vk::ClearColorValue { float32: f },
-                        ClearColor::SInt(s) => vk::ClearColorValue { int32: s },
-                        ClearColor::UInt(u) => vk::ClearColorValue { uint32: u },
-                    },
-                ),
-                LoadOp::DontCare => (
-                    vk::AttachmentLoadOp::DONT_CARE,
-                    vk::ClearColorValue { float32: [0.0; 4] },
-                ),
+            let load_op = vk::AttachmentLoadOp::from(att.load_op);
+            let clear_color = if let LoadOp::Clear(c) = att.load_op {
+                c.into()
+            } else {
+                vk::ClearColorValue { float32: [0.0; 4] }
             };
 
+            let slot = self
+                ._slots
+                .color_attachments
+                .get(&att.label)
+                .expect("no such attachment");
+
             vk::RenderingAttachmentInfo::default()
-                .image_view(cx.swapchain_image().view)
+                .image_view(cx.default_image_view(slot.produce))
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .resolve_mode(vk::ResolveModeFlags::NONE)
                 .load_op(load_op)
@@ -177,9 +174,15 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
             .map(color_attachment_info)
             .collect::<Vec<_>>();
 
+        let color_att_0 = self
+            ._slots
+            .color_attachments
+            .get(&self.pass.color_attachments()[0].label)
+            .expect("no color attachment");
+
         let render_area = vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: cx.display_info().image_extent,
+            extent: *cx.image_info(color_att_0.produce).extent.as_2d().unwrap(),
         };
 
         let rendering_info = vk::RenderingInfo::default()
@@ -247,11 +250,31 @@ pub enum ClearColor {
     UInt([u32; 4]),
 }
 
+impl From<ClearColor> for vk::ClearColorValue {
+    fn from(value: ClearColor) -> Self {
+        match value {
+            ClearColor::Float(f) => vk::ClearColorValue { float32: f },
+            ClearColor::SInt(s) => vk::ClearColorValue { int32: s },
+            ClearColor::UInt(u) => vk::ClearColorValue { uint32: u },
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq)]
 pub enum LoadOp<T> {
     Load,
     Clear(T),
     DontCare,
+}
+
+impl<T> From<LoadOp<T>> for vk::AttachmentLoadOp {
+    fn from(value: LoadOp<T>) -> Self {
+        match value {
+            LoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            LoadOp::Clear(_) => vk::AttachmentLoadOp::CLEAR,
+            LoadOp::DontCare => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
 }
 
 pub struct OutputAttachmentInfo<T> {
@@ -281,7 +304,7 @@ pub trait GraphicsPipeline {
         c"[unlabeled graphics pipeline]".into()
     }
 
-    fn execute(&self, pipe: &mut GraphicsPipelineInstance<'_, '_>);
+    fn execute(&self, pipe: &mut GraphicsPipelineInstance);
 }
 
 pub struct GraphicsPipelineVertexInfo {
@@ -320,11 +343,11 @@ pub struct RenderPassGraphicsPipeline {
     object: Box<dyn GraphicsPipeline>,
 }
 
-pub struct GraphicsPipelineInstance<'pipe, 'frame> {
-    cx: &'pipe mut FrameContext<'frame>,
+pub struct GraphicsPipelineInstance<'pipe, 'node, 'frame> {
+    cx: &'pipe mut NodeContext<'node, 'frame>,
 }
 
-impl<'pipe, 'frame> GraphicsPipelineInstance<'pipe, 'frame> {
+impl<'pipe, 'node, 'frame> GraphicsPipelineInstance<'pipe, 'node, 'frame> {
     pub fn draw(&mut self, vertex_count: u32, first_vertex: u32) {
         let device = self.cx.device();
         let cmdbuf = self.cx.command_buffer();

@@ -5,6 +5,7 @@ use tracing_log::log;
 
 use crate::{
     frame::{FrameContext, FrameResources},
+    image::{ImageInfo, ImageTiling},
     Device,
 };
 
@@ -36,7 +37,7 @@ impl SwapchainImage {
 pub struct DisplayInfo {
     pub min_image_count: u32,
     pub surface_format: vk::SurfaceFormatKHR,
-    pub image_extent: vk::Extent2D,
+    pub image_info: ImageInfo,
     pub present_mode: vk::PresentModeKHR,
 }
 
@@ -206,12 +207,7 @@ impl Display {
                 .image(img)
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(surface_format.format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::IDENTITY,
-                    g: vk::ComponentSwizzle::IDENTITY,
-                    b: vk::ComponentSwizzle::IDENTITY,
-                    a: vk::ComponentSwizzle::IDENTITY,
-                })
+                .components(vk::ComponentMapping::default())
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
@@ -226,6 +222,13 @@ impl Display {
             .map(|&img| unsafe { device.create_image_view(&view_info(img)) })
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
+
+        let swapchain_image_info = ImageInfo {
+            format: surface_format.format,
+            extent: image_extent.into(),
+            tiling: ImageTiling::Optimal,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        };
 
         let swapchain_images = images
             .into_iter()
@@ -243,7 +246,7 @@ impl Display {
         self.info = Some(DisplayInfo {
             min_image_count,
             surface_format,
-            image_extent,
+            image_info: swapchain_image_info,
             present_mode,
         });
 

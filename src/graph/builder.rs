@@ -9,7 +9,7 @@ use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     graph::{
-        Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, GraphNode, ImageAccess,
+        BoxNode, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, ImageAccess,
         ImageAccesses, ImageDependency, NodeDependency,
     },
     RenderPass, RenderPassBuilder,
@@ -23,7 +23,7 @@ pub struct GraphBuilder {
     image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
     image_labels: HashMap<String, GraphImage>,
 
-    nodes: Arena<GraphNode>,
+    nodes: Arena<BoxNode>,
 }
 
 impl GraphBuilder {
@@ -156,11 +156,21 @@ impl GraphBuilder {
         key
     }
 
-    pub(crate) fn add_node(&mut self, node: GraphNode) -> GraphKey {
+    pub(crate) fn add_node(&mut self, node: BoxNode) -> GraphKey {
         self.nodes.alloc_with_key(|node_key| {
-            // TODO(dp): node inputs
-
+            let inputs = node.node.inputs();
             let outputs = node.node.outputs();
+
+            for input in inputs.images {
+                self.image_usage[input.resource] |= input.usage;
+                self.image_access[input.resource].add_reader(ImageAccess {
+                    node_key,
+                    stage_mask: input.stage_mask,
+                    access_mask: input.access_mask,
+                    layout: input.layout,
+                });
+            }
+
             for output in outputs.images {
                 // Update image usage.
                 self.image_usage[output.resource] |= output.usage;
@@ -194,8 +204,6 @@ impl GraphBuilder {
                     access_mask: output.access_mask,
                     layout: output.layout,
                 });
-
-                println!("produced_accesses = {:?}", produced_accesses);
             }
 
             node

@@ -1,11 +1,10 @@
-use std::{ffi::CStr, time::Duration};
+use std::time::Duration;
 
 use ash::{prelude::*, vk};
-use tracing_log::log;
 
 use crate::{
     display::{DisplayInfo, SwapchainImage},
-    misc::{timeout_u64, IMAGE_SUBRESOURCE_RANGE_FULL},
+    misc::{timeout_u64, IMAGE_SUBRESOURCE_RANGE_FULL_COLOR},
     Device,
 };
 
@@ -28,18 +27,12 @@ pub struct FrameResources {
     ///
     /// The semaphore is unsignaled prior to queue submission, and signaled by the driver once all
     /// graphics operations relying on this frame context have completed.
-    // TODO(dp): split this into (render_complete, present_queue_ownership) when separate present
-    // queue is supported
     all_commands_complete: vk::Semaphore,
 
     /// Dedicated command pool for the frame context.
     command_pool: vk::CommandPool,
     /// Command buffer for the frame context.
     commands: vk::CommandBuffer,
-    // TODO(dp): cache intermediate targets
-    //
-    // /// Cache for intermediate targets.
-    // image_cache: ImageCache,
 }
 
 impl FrameResources {
@@ -68,11 +61,11 @@ impl FrameResources {
                 .set_debug_utils_object_name(image_available, c"image_available")
                 .unwrap();
 
-            let render_complete = device
+            let all_commands_complete = device
                 .create_semaphore(&semaphore_create_info)
                 .expect("failed to create render_complete semaphore");
             device
-                .set_debug_utils_object_name(render_complete, c"render_complete")
+                .set_debug_utils_object_name(all_commands_complete, c"render_complete")
                 .unwrap();
 
             let command_pool = device
@@ -91,7 +84,7 @@ impl FrameResources {
             FrameResources {
                 context_available,
                 image_available,
-                all_commands_complete: render_complete,
+                all_commands_complete,
                 command_pool,
                 commands,
             }
@@ -178,16 +171,15 @@ impl<'frame> AvailableFrameContext<'frame> {
             // Order this frame's color output commands after the previous frame's.
             .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+            // Make the previous frame's color attachment writes visible.
             .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
             .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
             .old_layout(vk::ImageLayout::UNDEFINED)
             .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            // The whole image is being cleared, so it's not necessary to perform a QFOT here even
-            // if the image was previously presented on another queue.
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(swapchain_image.image)
-            .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL);
+            .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL_COLOR);
 
         let image_memory_barriers = &[pre_render_barrier];
 
@@ -232,14 +224,10 @@ impl<'frame> FrameContext<'frame> {
             // Transition to presentation layout.
             .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            // TODO(dp): update this when multiple queue families are supported
-            //
-            // Release ownership from graphics queue to present queue. If the queues are the
-            // same, no ownership transfer occurs.
-            .src_queue_family_index(device.graphics_queue().family().as_u32())
-            .dst_queue_family_index(device.graphics_queue().family().as_u32())
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(self.attached.image)
-            .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL);
+            .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL_COLOR);
 
         let image_memory_barriers = &[post_render_barrier];
         let dep_info = vk::DependencyInfo::default().image_memory_barriers(image_memory_barriers);
@@ -300,30 +288,6 @@ impl<'frame> FrameContext<'frame> {
                 .present(&present_info)
                 .expect("failed to present swapchain image");
         }
-    }
-
-    /// Enters a debug span in the command buffer.
-    pub(crate) unsafe fn enter_debug_span(&mut self, label: &CStr, color: [f32; 4]) {
-        unsafe {
-            self.device.cmd_begin_debug_utils_label(
-                self.command_buffer(),
-                &vk::DebugUtilsLabelEXT::default()
-                    .label_name(label)
-                    .color(color),
-            )
-        };
-
-        self.num_active_debug_spans += 1;
-    }
-
-    /// Exits a debug span in the command buffer.
-    pub(crate) unsafe fn exit_debug_span(&mut self) {
-        if self.num_active_debug_spans == 0 {
-            log::error!("called exit_debug_span() with no spans active.");
-            return;
-        }
-
-        unsafe { self.device.cmd_end_debug_utils_label(self.command_buffer()) };
     }
 
     pub fn device(&self) -> &Device {

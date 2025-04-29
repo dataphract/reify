@@ -131,8 +131,8 @@ impl<T> Hash for Key<T> {
 /// Dense map type keyed by arena keys.
 ///
 /// This type is designed for cases where all (or almost all) elements of an arena need some
-/// associated data. Lookups are very fast (just an array index), but a sparse `ArenaMap` wastes a
-/// lot of space.
+/// associated data. Lookups are O(1), but a sparse `ArenaMap` wastes linear space in the number of
+/// empty elements.
 pub(crate) struct ArenaMap<K, V> {
     items: Vec<Option<V>>,
     _phantom: PhantomData<fn() -> K>,
@@ -168,6 +168,13 @@ impl<T, V> IndexMut<Key<T>> for ArenaMap<Key<T>, V> {
 }
 
 impl<T, V> ArenaMap<Key<T>, V> {
+    pub fn with_capacity(cap: usize) -> ArenaMap<Key<T>, V> {
+        ArenaMap {
+            items: Vec::with_capacity(cap),
+            _phantom: PhantomData,
+        }
+    }
+
     #[inline]
     fn grow(&mut self, key: Key<T>) {
         let min_len = key.index.checked_add(1).unwrap();
