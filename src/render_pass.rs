@@ -5,7 +5,7 @@ use ash::vk;
 use crate::{
     graph::{
         node::{NodeContext, NodeOutputs, OutputImage, OwnedNodeOutputs},
-        BoxNode, GraphImage, GraphKey, Node,
+        GraphImage, GraphKey, Node,
     },
     Device, GraphEditor,
 };

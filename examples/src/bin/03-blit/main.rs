@@ -158,7 +158,7 @@ void main() {
         BlitApp { runtime }
     }
 
-    fn render(&mut self, cx: &mut reify2::FrameContext) {
-        self.runtime.execute(cx);
+    fn runtime(&mut self) -> &mut reify2::Runtime {
+        &mut self.runtime
     }
 }

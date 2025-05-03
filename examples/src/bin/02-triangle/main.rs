@@ -1,3 +1,5 @@
+// This example demonstrates drawing a triangle using a graphics pipeline.
+
 use std::ffi::CString;
 
 use ash::vk;
@@ -143,7 +145,7 @@ void main() {
         TriangleApp { runtime }
     }
 
-    fn render(&mut self, cx: &mut reify2::FrameContext) {
-        self.runtime.execute(cx);
+    fn runtime(&mut self) -> &mut reify2::Runtime {
+        &mut self.runtime
     }
 }

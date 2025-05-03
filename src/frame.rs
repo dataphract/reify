@@ -212,7 +212,7 @@ pub struct FrameContext<'frame> {
 
 impl<'frame> FrameContext<'frame> {
     #[tracing::instrument(skip_all)]
-    pub fn submit_and_present(self, device: &Device) {
+    pub fn submit_and_present(self, device: &Device, swapchain_image_layout: vk::ImageLayout) {
         // Record a barrier to:
         let post_render_barrier = vk::ImageMemoryBarrier2::default()
             // Order this frame's color output commands before the next frame's.
@@ -222,7 +222,7 @@ impl<'frame> FrameContext<'frame> {
             .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
             .dst_access_mask(vk::AccessFlags2::empty())
             // Transition to presentation layout.
-            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .old_layout(swapchain_image_layout)
             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)

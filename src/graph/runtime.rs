@@ -61,6 +61,17 @@ impl Runtime {
         self.image_bindings.set(image, binding);
     }
 
+    // TODO: not super happy with this, but the swapchain is a special case
+    pub fn swapchain_image_layout(&self) -> vk::ImageLayout {
+        let key = self.graph.swapchain_image();
+        self.graph
+            .inner
+            .image_access
+            .get(key)
+            .unwrap()
+            .produced_layout()
+    }
+
     fn resolve_resources(&mut self) {
         for (img_key, graph_img_info) in self.graph.inner.image_info.iter() {
             let img_info = ImageInfo {

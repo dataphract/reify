@@ -1,6 +1,5 @@
 use ash::vk;
 use naga::{back, front, valid};
-use tracing_log::log;
 use tracing_subscriber::layer::SubscriberExt;
 use winit::{
     event::WindowEvent, event_loop::ActiveEventLoop, platform::x11::EventLoopBuilderExtX11,
@@ -9,9 +8,12 @@ use winit::{
 
 pub trait App {
     fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> Self;
-    fn render(&mut self, cx: &mut reify2::FrameContext<'_>);
+    fn runtime(&mut self) -> &mut reify2::Runtime;
 }
 
+// Generic app runner.
+//
+// This handles the non-rendering application logic like windowing and event loop handling.
 pub struct AppRunner<A> {
     device: reify2::Device,
     window: Option<Window>,
@@ -87,9 +89,9 @@ impl<A: App> AppRunner<A> {
 
         match acquire {
             Ok(mut cx) => {
-                self.app.as_mut().unwrap().render(&mut cx);
-
-                cx.submit_and_present(&self.device);
+                let rt = self.app.as_mut().unwrap().runtime();
+                rt.execute(&mut cx);
+                cx.submit_and_present(&self.device, rt.swapchain_image_layout());
             }
 
             Err(_) => self.recreate_display(),
