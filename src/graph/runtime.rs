@@ -101,7 +101,37 @@ impl Runtime {
             let node_key = self.graph.inner.graph.node(dep_key);
             let node = &self.graph.inner.nodes[*node_key];
 
-            log::info!("execute node {}", node.debug_label().to_str().unwrap());
+            log::debug!("execute node {}", node.debug_label().to_str().unwrap());
+
+            // For image outputs that don't consume an image, transition from UNDEFINED layout.
+            for out in node.outputs().images {
+                let img;
+                let range;
+                match self.image_bindings.get(out.image) {
+                    ImageBinding::Transient => {
+                        img = self.transient[self.transient_idx()].get(out.image).handle;
+                        range = IMAGE_SUBRESOURCE_RANGE_FULL_COLOR;
+                    }
+                    ImageBinding::Swapchain => {
+                        img = cx.swapchain_image().image;
+                        range = IMAGE_SUBRESOURCE_RANGE_FULL_COLOR;
+                    }
+                }
+
+                if out.consumed.is_none() {
+                    image_barriers.push(
+                        vk::ImageMemoryBarrier2::default()
+                            .image(img)
+                            .src_stage_mask(vk::PipelineStageFlags2::empty())
+                            .dst_stage_mask(out.stage_mask)
+                            .src_access_mask(vk::AccessFlags2::empty())
+                            .dst_access_mask(out.access_mask)
+                            .old_layout(vk::ImageLayout::UNDEFINED)
+                            .new_layout(out.layout)
+                            .subresource_range(range),
+                    );
+                }
+            }
 
             // Synchronize all resource dependencies.
             for dep in self.graph.node_dependencies(dep_key) {

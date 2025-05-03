@@ -81,7 +81,7 @@ impl OwnedNodeOutputs {
 }
 
 pub struct OutputImage {
-    pub resource: GraphImage,
+    pub image: GraphImage,
     pub consumed: Option<GraphImage>,
     pub stage_mask: vk::PipelineStageFlags2,
     pub access_mask: vk::AccessFlags2,

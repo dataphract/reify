@@ -5,6 +5,7 @@ use std::{
 };
 
 use ash::vk;
+use tracing_log::log;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
@@ -111,7 +112,7 @@ impl GraphEditor {
 
             for output in outputs.images {
                 // Update image usage.
-                self.image_usage[output.resource] |= output.usage;
+                self.image_usage[output.image] |= output.usage;
 
                 // If this output consumes an image, mark the image as such.
                 if let Some(consumed) = output.consumed {
@@ -129,7 +130,7 @@ impl GraphEditor {
                     });
                 }
 
-                let produced = output.resource;
+                let produced = output.image;
                 let produced_accesses = &mut self.image_access[produced];
 
                 if produced_accesses.produced_by.is_some() {

@@ -97,7 +97,6 @@ impl<A: App> AppRunner<A> {
     }
 
     pub fn recreate_display(&mut self) {
-        log::info!("recreate");
         let inner_size = self.window.as_ref().unwrap().inner_size();
         let extent = vk::Extent2D {
             width: inner_size.width,

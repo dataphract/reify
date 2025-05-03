@@ -54,7 +54,7 @@ fn input_image(img: GraphImage) -> InputImage {
 
 fn output_image(img: GraphImage, consumed: Option<GraphImage>) -> OutputImage {
     OutputImage {
-        resource: img,
+        image: img,
         consumed,
         stage_mask: vk::PipelineStageFlags2::BLIT,
         access_mask: vk::AccessFlags2::TRANSFER_WRITE,

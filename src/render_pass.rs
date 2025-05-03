@@ -56,7 +56,7 @@ where
 
         for att in self.slots.color_attachments.values() {
             outputs.images.push(OutputImage {
-                resource: att.produce,
+                image: att.produce,
                 consumed: att.consume,
                 stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
                 access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,

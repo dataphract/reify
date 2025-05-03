@@ -61,6 +61,7 @@ impl Graph {
         img: vk::Image,
         range: vk::ImageSubresourceRange,
     ) -> vk::ImageMemoryBarrier2<'_> {
+        tracing_log::log::debug!("{:?} -> {:?}", dep.old_layout, dep.new_layout);
         vk::ImageMemoryBarrier2::default()
             .src_stage_mask(dep.src_stage_mask)
             .src_access_mask(dep.src_access_mask)
@@ -107,7 +108,7 @@ impl NodeDependency {
 
     fn add_image_write_after_read(&mut self, writer: &OutputImage, reader: &ImageAccess) {
         self.images.push(ImageDependency {
-            image: writer.resource,
+            image: writer.image,
             src_stage_mask: reader.stage_mask,
             dst_stage_mask: writer.stage_mask,
             src_access_mask: vk::AccessFlags2::empty(),
@@ -119,7 +120,7 @@ impl NodeDependency {
 
     fn add_image_write_after_write(&mut self, second: &OutputImage, first: &ImageAccess) {
         self.images.push(ImageDependency {
-            image: second.resource,
+            image: second.image,
             src_stage_mask: first.stage_mask,
             dst_stage_mask: second.stage_mask,
             src_access_mask: first.access_mask,
