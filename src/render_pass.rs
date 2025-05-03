@@ -7,7 +7,7 @@ use crate::{
         node::{NodeContext, NodeOutputs, OutputImage, OwnedNodeOutputs},
         BoxNode, GraphImage, GraphKey, Node,
     },
-    Device, GraphBuilder,
+    Device, GraphEditor,
 };
 
 pub trait RenderPass {
@@ -21,7 +21,8 @@ pub trait RenderPass {
 }
 
 pub struct RenderPassBuilder<'graph, R> {
-    graph: &'graph mut GraphBuilder,
+    graph: &'graph mut GraphEditor,
+    label: String,
 
     pass: R,
     slots: RenderPassSlots,
@@ -33,9 +34,14 @@ impl<'graph, R> RenderPassBuilder<'graph, R>
 where
     R: RenderPass + 'static,
 {
-    pub(crate) fn new(graph: &'graph mut GraphBuilder, pass: R) -> RenderPassBuilder<'graph, R> {
+    pub(crate) fn new(
+        graph: &'graph mut GraphEditor,
+        label: String,
+        pass: R,
+    ) -> RenderPassBuilder<'graph, R> {
         RenderPassBuilder {
             graph,
+            label,
             pass,
             slots: RenderPassSlots::default(),
             pipelines: Vec::new(),
@@ -59,14 +65,15 @@ where
             });
         }
 
-        self.graph.add_node(BoxNode {
-            node: Box::new(RenderPassNode {
+        self.graph.add_node(
+            self.label,
+            RenderPassNode {
                 pass: self.pass,
                 _slots: self.slots,
                 outputs,
                 pipelines: self.pipelines,
-            }),
-        })
+            },
+        )
     }
 
     #[must_use]

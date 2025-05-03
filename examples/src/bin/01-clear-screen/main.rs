@@ -30,7 +30,7 @@ impl reify2::RenderPass for ClearScreenPass {
 
 impl examples::App for ClearScreenApp {
     fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> ClearScreenApp {
-        let mut graph = reify2::GraphBuilder::new();
+        let mut graph = reify2::GraphEditor::new();
 
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
@@ -41,7 +41,7 @@ impl examples::App for ClearScreenApp {
         );
 
         let _pass = graph
-            .add_render_pass(ClearScreenPass::default())
+            .add_render_pass("clear_screen".into(), ClearScreenPass::default())
             .set_color_attachment("out_color".into(), swapchain_image, None)
             .build();
 

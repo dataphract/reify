@@ -7,7 +7,8 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 
 mod arena;
 
-//mod blit;
+mod blit;
+pub use blit::BlitNode;
 
 mod depgraph;
 
@@ -17,16 +18,16 @@ pub use device::{Device, PhysicalDevice};
 mod display;
 pub use display::{Display, DisplayInfo};
 
+mod frame;
+pub use frame::FrameContext;
+
 mod graph;
-pub use graph::{builder::GraphBuilder, Graph, GraphImageInfo, Runtime};
+pub use graph::{builder::GraphEditor, Graph, GraphImageInfo, Runtime};
 
 mod image;
 
 mod instance;
 pub use instance::instance;
-
-mod frame;
-pub use frame::FrameContext;
 
 mod misc;
 

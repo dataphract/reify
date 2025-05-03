@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    mem,
     sync::Arc,
 };
 
@@ -10,25 +11,26 @@ use crate::{
     depgraph::DepGraph,
     graph::{
         BoxNode, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, ImageAccess,
-        ImageAccesses, ImageDependency, NodeDependency,
+        ImageAccesses, Node, NodeDependency,
     },
     RenderPass, RenderPassBuilder,
 };
 
 // TODO(dp): maybe don't provide Default, since it guarantees implicit allocations?
 #[derive(Default)]
-pub struct GraphBuilder {
+pub struct GraphEditor {
     images: Arena<GraphImageInfo>,
     image_access: ArenaMap<GraphImage, ImageAccesses>,
     image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
     image_labels: HashMap<String, GraphImage>,
 
     nodes: Arena<BoxNode>,
+    node_labels: ArenaMap<GraphKey, String>,
 }
 
-impl GraphBuilder {
-    pub fn new() -> GraphBuilder {
-        GraphBuilder::default()
+impl GraphEditor {
+    pub fn new() -> GraphEditor {
+        GraphEditor::default()
     }
 
     pub fn build(self, final_image: GraphImage) -> Graph {
@@ -50,82 +52,8 @@ impl GraphBuilder {
         // - Execution dependencies, which ensure that a resource R read by node A is not consumed
         //   by node B before A has finished its reads.
 
-        // Insert memory dependencies.
-        let mut deps: DepGraph<GraphKey, NodeDependency> = DepGraph::default();
-        let mut next_depth = Vec::new();
-        let mut cur_depth = HashSet::new();
-        let mut consumers: HashMap<GraphKey, Vec<GraphImage>> = HashMap::new();
-        let mut arena_to_depgraph: ArenaMap<GraphKey, arena::Key<GraphKey>> = ArenaMap::default();
-
-        next_depth.push(final_node);
-
-        while !next_depth.is_empty() {
-            assert!(cur_depth.is_empty());
-
-            for builder_node in next_depth.drain(..) {
-                if cur_depth.contains(&builder_node) {
-                    // Another node at the previous depth already depends on this node.
-                    continue;
-                }
-
-                arena_to_depgraph.entry(builder_node).or_insert_with(|| {
-                    cur_depth.insert(builder_node);
-                    deps.add_node(builder_node)
-                });
-            }
-
-            for builder_key in cur_depth.drain() {
-                // Insert memory dependencies. Since entire depths are inserted into the graph at
-                // once, this will not miss lateral edges (i.e., edges from one depth-N node to
-                // another). Any node at this depth which hasn't been inserted into the dependency
-                // graph is not a transitive dependency of the output node.
-                let builder_node = &self.nodes[builder_key];
-
-                for output in builder_node.node.outputs().images {
-                    let produced_access = self.image_access.get(output.resource).unwrap();
-
-                    if let Some(c) = output.consumed {
-                        consumers.entry(builder_key).or_default().push(c);
-                    }
-
-                    for dependent in produced_access
-                        .read_by
-                        .iter()
-                        .chain(produced_access.consumed_by.as_ref())
-                    {
-                        let Some(&src_key) = arena_to_depgraph.get(dependent.node_key) else {
-                            continue;
-                        };
-
-                        let dst_key = arena_to_depgraph[builder_key];
-
-                        deps.edge_mut_or_default(src_key, dst_key)
-                            .images
-                            .push(ImageDependency::after_write(output, dependent));
-                    }
-                }
-            }
-        }
-
-        for (&consumer_key, consumeds) in consumers.iter() {
-            let consumer_key = arena_to_depgraph[consumer_key];
-
-            for &consumed_key in consumeds {
-                let access = &self.image_access[consumed_key];
-                let consumer = access.consumed_by.as_ref().unwrap();
-                for reader in &access.read_by {
-                    let Some(&reader_key) = arena_to_depgraph.get(reader.node_key) else {
-                        continue;
-                    };
-
-                    deps.edge_mut_or_default(consumer_key, reader_key)
-                        .images
-                        .push(ImageDependency::after_read(consumed_key, reader, consumer));
-                }
-            }
-        }
-
-        let node_order = deps.toposort_reverse();
+        let graph = GraphBuilder::new(&self).build(final_node);
+        let graph_order = graph.toposort_reverse();
 
         Graph {
             inner: Arc::new(GraphInner {
@@ -133,12 +61,16 @@ impl GraphBuilder {
                 image_info: self.images,
                 image_access: self.image_access,
                 image_usage: self.image_usage,
-                graph: deps,
-                graph_order: node_order,
+                graph,
+                graph_order,
                 nodes: self.nodes,
+                node_labels: self.node_labels,
             }),
         }
     }
+
+    /// Inserts all dependencies of `node_key` into the dependency tree.
+    fn insert_deps(&self, node_key: arena::Key<BoxNode>, dep_graph: &mut GraphBuilder) {}
 
     pub fn add_image(&mut self, label: String, info: GraphImageInfo) -> GraphImage {
         let key = self.images.alloc(info);
@@ -156,10 +88,16 @@ impl GraphBuilder {
         key
     }
 
-    pub(crate) fn add_node(&mut self, node: BoxNode) -> GraphKey {
-        self.nodes.alloc_with_key(|node_key| {
-            let inputs = node.node.inputs();
-            let outputs = node.node.outputs();
+    #[inline]
+    pub fn add_node<N: Node + 'static>(&mut self, label: String, node: N) -> GraphKey {
+        // delegate to boxed impl to reduce monomorphization cost
+        self.add_box_node(label, Box::new(node))
+    }
+
+    fn add_box_node(&mut self, label: String, node: BoxNode) -> GraphKey {
+        let key = self.nodes.alloc_with_key(|node_key| {
+            let inputs = node.inputs();
+            let outputs = node.outputs();
 
             for input in inputs.images {
                 self.image_usage[input.resource] |= input.usage;
@@ -207,13 +145,105 @@ impl GraphBuilder {
             }
 
             node
-        })
+        });
+
+        self.node_labels.insert(key, label);
+
+        key
     }
 
-    pub fn add_render_pass<R>(&mut self, render_pass: R) -> RenderPassBuilder<'_, R>
+    pub fn add_render_pass<R>(&mut self, label: String, render_pass: R) -> RenderPassBuilder<'_, R>
     where
         R: RenderPass + 'static,
     {
-        RenderPassBuilder::new(self, render_pass)
+        RenderPassBuilder::new(self, label, render_pass)
+    }
+}
+
+struct GraphBuilder<'a> {
+    editor: &'a GraphEditor,
+
+    dep_graph: DepGraph<GraphKey, NodeDependency>,
+    arena_to_depgraph: ArenaMap<GraphKey, arena::Key<GraphKey>>,
+}
+
+impl<'a> GraphBuilder<'a> {
+    fn new(builder: &GraphEditor) -> GraphBuilder {
+        GraphBuilder {
+            editor: builder,
+            dep_graph: DepGraph::default(),
+            arena_to_depgraph: ArenaMap::default(),
+        }
+    }
+
+    fn build(mut self, init: GraphKey) -> DepGraph<GraphKey, NodeDependency> {
+        let mut cur_depth = HashSet::new();
+        let mut next_depth = HashSet::new();
+
+        let node_dep_key = self.dep_graph.add_node(init);
+        self.arena_to_depgraph.insert(init, node_dep_key);
+        cur_depth.insert(init);
+
+        while !cur_depth.is_empty() {
+            for node in cur_depth.drain() {
+                self.visit(&mut next_depth, node);
+            }
+
+            mem::swap(&mut cur_depth, &mut next_depth);
+        }
+
+        self.dep_graph
+    }
+
+    fn visit(&mut self, next_depth: &mut HashSet<GraphKey>, node_key: GraphKey) {
+        let node = &self.editor.nodes[node_key];
+
+        // For each node input, add a dependency from this node to the producer of the input.
+        for input in node.inputs().images {
+            let accesses = self.editor.image_access.get(input.resource).unwrap();
+            let producer = &accesses.produced_by.expect("no producer for image");
+
+            self.dependency_mut(next_depth, node_key, producer.node_key)
+                .add_image_read_after_write(input, producer);
+        }
+
+        // For each node output, add dependencies if the output consumes an image.
+        for output in node.outputs().images {
+            let Some(consumed) = output.consumed else {
+                continue;
+            };
+
+            let consumed_accesses = self.editor.image_access.get(consumed).unwrap();
+
+            // If the consumed image has no readers, add a direct dependency on the image producer.
+            if consumed_accesses.read_by.is_empty() {
+                let producer = consumed_accesses.produced_by.unwrap();
+                self.dependency_mut(next_depth, node_key, producer.node_key)
+                    .add_image_write_after_write(output, &producer);
+
+                continue;
+            }
+
+            // Otherwise, add a dependency on each reader.
+            for reader in &consumed_accesses.read_by {
+                self.dependency_mut(next_depth, node_key, reader.node_key)
+                    .add_image_write_after_read(output, reader);
+            }
+        }
+    }
+
+    fn dependency_mut(
+        &mut self,
+        next_depth: &mut HashSet<GraphKey>,
+        src: GraphKey,
+        dst: GraphKey,
+    ) -> &mut NodeDependency {
+        let src_dep_key = *self.arena_to_depgraph.get(src).unwrap();
+        let dst_dep_key = *self.arena_to_depgraph.entry(dst).or_insert_with(|| {
+            next_depth.insert(dst);
+            self.dep_graph.add_node(dst)
+        });
+
+        self.dep_graph.edge_mut_or_default(src_dep_key, dst_dep_key)
     }
 }

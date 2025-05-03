@@ -80,18 +80,16 @@ impl OwnedNodeOutputs {
     }
 }
 
-pub(crate) struct OutputImage {
-    pub(crate) resource: GraphImage,
-    pub(crate) consumed: Option<GraphImage>,
-    pub(crate) stage_mask: vk::PipelineStageFlags2,
-    pub(crate) access_mask: vk::AccessFlags2,
-    pub(crate) layout: vk::ImageLayout,
-    pub(crate) usage: vk::ImageUsageFlags,
+pub struct OutputImage {
+    pub resource: GraphImage,
+    pub consumed: Option<GraphImage>,
+    pub stage_mask: vk::PipelineStageFlags2,
+    pub access_mask: vk::AccessFlags2,
+    pub layout: vk::ImageLayout,
+    pub usage: vk::ImageUsageFlags,
 }
 
-pub struct BoxNode {
-    pub(crate) node: Box<dyn Node>,
-}
+pub type BoxNode = Box<dyn Node>;
 
 /// Node-local context during graph execution.
 pub struct NodeContext<'run, 'frame> {
@@ -124,6 +122,11 @@ impl<'run, 'frame> NodeContext<'run, 'frame> {
     #[inline]
     pub fn device(&self) -> &Device {
         self.frame.device()
+    }
+
+    #[inline]
+    pub fn image(&self, image: GraphImage) -> vk::Image {
+        self.run_cx.image(image, self.frame)
     }
 
     #[inline]

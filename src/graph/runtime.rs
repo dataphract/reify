@@ -96,8 +96,12 @@ impl Runtime {
         };
 
         for &dep_key in self.graph.inner.graph_order.iter() {
+            image_barriers.clear();
+
             let node_key = self.graph.inner.graph.node(dep_key);
             let node = &self.graph.inner.nodes[*node_key];
+
+            log::info!("execute node {}", node.debug_label().to_str().unwrap());
 
             // Synchronize all resource dependencies.
             for dep in self.graph.node_dependencies(dep_key) {
@@ -132,11 +136,11 @@ impl Runtime {
             unsafe {
                 device.cmd_pipeline_barrier2(cmdbuf, &deps);
 
-                run_cx.enter_debug_span(cx, &node.node.debug_label(), [1.0, 0.6, 0.6, 1.0]);
+                run_cx.enter_debug_span(cx, &node.debug_label(), [1.0, 0.6, 0.6, 1.0]);
 
                 {
                     let mut node_cx = NodeContext::new(run_cx, cx);
-                    node.node.execute(&mut node_cx);
+                    node.execute(&mut node_cx);
                     node_cx.exit_all_debug_spans();
                 }
 
@@ -156,6 +160,13 @@ pub struct RunContext<'run> {
 }
 
 impl<'run> RunContext<'run> {
+    pub fn image(&self, image: GraphImage, cx: &FrameContext) -> vk::Image {
+        match self.image_bindings.get(image) {
+            ImageBinding::Transient => self.transient.get(image).handle,
+            ImageBinding::Swapchain => cx.swapchain_image().image,
+        }
+    }
+
     pub fn default_image_view(&self, image: GraphImage, cx: &FrameContext) -> vk::ImageView {
         match self.image_bindings.get(image) {
             ImageBinding::Transient => self.transient.get(image).default_view,

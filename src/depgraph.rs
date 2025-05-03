@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use tracing_log::log;
+
 use crate::arena::{self, Arena, ArenaMap};
 
 pub(crate) type EdgeKey<V> = arena::Key<Edge<V>>;
@@ -73,10 +75,12 @@ impl<V, E> DepGraph<V, E> {
 
     // Performs a topological sort of the graph, returning the reversed result.
     pub fn toposort_reverse(&self) -> Vec<arena::Key<V>> {
+        log::debug!("toposorting {} nodes", self.nodes.len());
+
         let mut sorted = VecDeque::with_capacity(self.nodes.len());
 
         // TODO(dp): use a bitvec
-        let mut edges_seen: ArenaMap<EdgeKey<V>, bool> = ArenaMap::default();
+        let mut edges_seen: ArenaMap<EdgeKey<V>, bool> = ArenaMap::with_capacity(self.nodes.len());
 
         // Initialize the queue with the list of nodes with no dependents.
         let mut queue = VecDeque::from_iter(
@@ -90,7 +94,7 @@ impl<V, E> DepGraph<V, E> {
 
             for &adj in &self.adjacency[node_key] {
                 // Mark each dependency.
-                edges_seen[adj] = true;
+                edges_seen.insert(adj, true);
 
                 let dependency_key = self.edges[adj].dst;
 

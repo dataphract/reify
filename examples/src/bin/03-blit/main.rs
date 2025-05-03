@@ -3,12 +3,13 @@ use std::ffi::CString;
 use ash::vk;
 use examples::GlslCompiler;
 use naga::ShaderStage;
+use reify2::BlitNode;
 
 fn main() {
-    examples::AppRunner::<TriangleApp>::new().run();
+    examples::AppRunner::<BlitApp>::new().run();
 }
 
-struct TriangleApp {
+struct BlitApp {
     runtime: reify2::Runtime,
 }
 
@@ -86,8 +87,8 @@ impl reify2::GraphicsPipeline for TrianglePipeline {
     }
 }
 
-impl examples::App for TriangleApp {
-    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> TriangleApp {
+impl examples::App for BlitApp {
+    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> BlitApp {
         let vert_src = r#"
 #version 460 core
 
@@ -123,6 +124,21 @@ void main() {
         };
 
         let mut graph = reify2::GraphEditor::new();
+
+        let triangle_out_color = graph.add_image(
+            "triangle_out_color".into(),
+            reify2::GraphImageInfo {
+                format: vk::Format::B8G8R8A8_SRGB,
+                extent: *display_info.image_info.extent.as_2d().unwrap(),
+            },
+        );
+
+        graph
+            .add_render_pass("triangle_pass".into(), TriangleRenderPass::default())
+            .set_color_attachment("out_color".into(), triangle_out_color, None)
+            .add_graphics_pipeline(device, triangle_pipeline)
+            .build();
+
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
             reify2::GraphImageInfo {
@@ -131,16 +147,15 @@ void main() {
             },
         );
 
-        graph
-            .add_render_pass("triangle_pass".into(), TriangleRenderPass::default())
-            .set_color_attachment("out_color".into(), swapchain_image, None)
-            .add_graphics_pipeline(device, triangle_pipeline)
-            .build();
+        graph.add_node(
+            "blit".into(),
+            BlitNode::new(triangle_out_color, swapchain_image, None),
+        );
 
         let graph = graph.build(swapchain_image);
         let runtime = reify2::Runtime::new(device.clone(), graph);
 
-        TriangleApp { runtime }
+        BlitApp { runtime }
     }
 
     fn render(&mut self, cx: &mut reify2::FrameContext) {
