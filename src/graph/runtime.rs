@@ -72,6 +72,7 @@ impl Runtime {
             .produced_layout()
     }
 
+    #[tracing::instrument(skip_all)]
     fn resolve_resources(&mut self) {
         for (img_key, graph_img_info) in self.graph.inner.image_info.iter() {
             let img_info = ImageInfo {
@@ -91,12 +92,14 @@ impl Runtime {
         }
     }
 
+    #[tracing::instrument(name = "Runtime::execute", skip_all)]
     pub fn execute(&mut self, cx: &mut FrameContext) {
         self.resolve_resources();
 
         let device = cx.device().clone();
         let cmdbuf = cx.command_buffer();
 
+        // TODO: cache this between executions
         let mut image_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
 
         let mut run_cx = RunContext {
@@ -111,8 +114,6 @@ impl Runtime {
 
             let node_key = self.graph.inner.graph.node(dep_key);
             let node = &self.graph.inner.nodes[*node_key];
-
-            log::debug!("execute node {}", node.debug_label().to_str().unwrap());
 
             // For image outputs that don't consume an image, transition from UNDEFINED layout.
             for out in node.outputs().images {

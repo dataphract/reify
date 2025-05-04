@@ -187,6 +187,7 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
         self.pass.debug_label()
     }
 
+    #[tracing::instrument(name = "RenderPassNode::execute", skip_all)]
     unsafe fn execute(&self, cx: &mut NodeContext) {
         // TODO(dp): make method on ColorAttachmentInfo?
         let color_attachment_info =

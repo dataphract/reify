@@ -5,7 +5,6 @@ use std::{
 };
 
 use ash::vk;
-use tracing_log::log;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
