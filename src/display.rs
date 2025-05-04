@@ -169,10 +169,18 @@ impl Display {
             surf_caps.current_extent
         };
 
+        let supported_present_modes = instance
+            .khr_surface()
+            .get_physical_device_surface_present_modes(device.physical_device().raw(), self.surface)
+            .unwrap();
+
         // TODO(dp): make configurable
-        //
-        // Implementations are required to support FIFO.
-        let present_mode = vk::PresentModeKHR::FIFO;
+        let present_mode = if supported_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
+            vk::PresentModeKHR::MAILBOX
+        } else {
+            // Implementations are required to support FIFO.
+            vk::PresentModeKHR::FIFO
+        };
 
         let create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(self.surface)
