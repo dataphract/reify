@@ -47,6 +47,7 @@ impl Default for ClearScreenPass {
                 label: "out_color".into(),
                 format: None,
                 load_op: reify2::LoadOp::Clear(reify2::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
+                store_op: reify2::StoreOp::Store,
             }],
         }
     }

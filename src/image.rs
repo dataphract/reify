@@ -1,7 +1,7 @@
 use ash::vk;
 use gpu_allocator::vulkan::{Allocation as GpuAllocation, AllocationCreateDesc, AllocationScheme};
 
-use crate::{misc::IMAGE_SUBRESOURCE_RANGE_FULL_COLOR, Device};
+use crate::Device;
 
 pub struct Image {
     pub(crate) info: ImageInfo,
@@ -43,13 +43,14 @@ impl Image {
             ImageExtent::D2(_) => vk::ImageViewType::TYPE_2D,
         };
 
+        let default_aspects = info.format.aspects();
         let view_info = vk::ImageViewCreateInfo::default()
             .flags(vk::ImageViewCreateFlags::empty())
             .image(image)
             .view_type(view_type)
             .format(info.format)
             .components(vk::ComponentMapping::default())
-            .subresource_range(IMAGE_SUBRESOURCE_RANGE_FULL_COLOR);
+            .subresource_range(subresource_range_full(default_aspects));
 
         let default_view = unsafe {
             device
@@ -83,6 +84,43 @@ impl Image {
             device.destroy_image_view(default_view);
             device.destroy_image(handle);
         }
+    }
+}
+
+// Might eventually want our own Format type, but for now this gives some convenience methods on
+// vk::Format.
+pub trait FormatExt {
+    fn aspects(self) -> vk::ImageAspectFlags;
+}
+
+impl FormatExt for vk::Format {
+    fn aspects(self) -> vk::ImageAspectFlags {
+        match self {
+            vk::Format::D16_UNORM | vk::Format::X8_D24_UNORM_PACK32 | vk::Format::D32_SFLOAT => {
+                vk::ImageAspectFlags::DEPTH
+            }
+
+            vk::Format::S8_UINT => vk::ImageAspectFlags::STENCIL,
+
+            vk::Format::D16_UNORM_S8_UINT
+            | vk::Format::D24_UNORM_S8_UINT
+            | vk::Format::D32_SFLOAT_S8_UINT => {
+                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+            }
+
+            _ => vk::ImageAspectFlags::COLOR,
+        }
+    }
+}
+
+pub fn subresource_range_full(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
+    // TODO: needs fixed for mips and arrays
+    vk::ImageSubresourceRange {
+        aspect_mask,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
     }
 }
 

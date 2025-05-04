@@ -15,6 +15,10 @@ pub trait RenderPass {
         &[]
     }
 
+    fn depth_attachment(&self) -> Option<&DepthStencilAttachmentInfo> {
+        None
+    }
+
     fn debug_label(&self) -> CString {
         c"[unlabeled render pass node]".into()
     }
@@ -65,11 +69,24 @@ where
             });
         }
 
+        if let Some(att) = &self.slots.depth_stencil_attachment {
+            outputs.images.push(OutputImage {
+                image: att.produce,
+                consumed: att.consume,
+                stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            });
+        }
+
         self.graph.add_node(
             self.label,
             RenderPassNode {
                 pass: self.pass,
-                _slots: self.slots,
+                slots: self.slots,
                 outputs,
                 pipelines: self.pipelines,
             },
@@ -83,6 +100,7 @@ where
         image: GraphImage,
         consume: Option<GraphImage>,
     ) -> Self {
+        // TODO: do away with labels, just use indices
         if !self
             .pass
             .color_attachments()
@@ -106,15 +124,34 @@ where
     }
 
     #[must_use]
+    #[inline]
+    pub fn set_depth_stencil_attachment(
+        mut self,
+        image: GraphImage,
+        consume: Option<GraphImage>,
+    ) -> Self {
+        self.slots.depth_stencil_attachment = Some(RenderPassOutputSlot {
+            produce: image,
+            consume,
+        });
+
+        self
+    }
+
+    #[must_use]
     pub fn add_graphics_pipeline<P>(mut self, device: &Device, pipeline: P) -> Self
     where
         P: GraphicsPipeline + 'static,
     {
+        // TODO: this should be deferred until Runtime creation -- GraphEditor shouldn't need an
+        // active Vulkan instance
         let storage = create_graphics_pipeline_storage(device, &pipeline);
+
         self.pipelines.push(RenderPassGraphicsPipeline {
             storage,
             object: Box::new(pipeline),
         });
+
         self
     }
 }
@@ -122,6 +159,7 @@ where
 #[derive(Default)]
 struct RenderPassSlots {
     color_attachments: HashMap<String, RenderPassOutputSlot>,
+    depth_stencil_attachment: Option<RenderPassOutputSlot>,
 }
 
 struct RenderPassOutputSlot {
@@ -132,7 +170,7 @@ struct RenderPassOutputSlot {
 struct RenderPassNode<R> {
     pass: R,
 
-    _slots: RenderPassSlots,
+    slots: RenderPassSlots,
     outputs: OwnedNodeOutputs,
 
     pipelines: Vec<RenderPassGraphicsPipeline>,
@@ -151,28 +189,19 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
 
     unsafe fn execute(&self, cx: &mut NodeContext) {
         // TODO(dp): make method on ColorAttachmentInfo?
-        let color_attachment_info = |att: &ColorAttachmentInfo| {
-            let load_op = vk::AttachmentLoadOp::from(att.load_op);
-            let clear_color = if let LoadOp::Clear(c) = att.load_op {
-                c.into()
-            } else {
-                vk::ClearColorValue { float32: [0.0; 4] }
+        let color_attachment_info =
+            |att: &ColorAttachmentInfo| -> vk::RenderingAttachmentInfo<'static> {
+                let slot = self
+                    .slots
+                    .color_attachments
+                    .get(&att.label)
+                    .expect("no such attachment");
+
+                att.rendering_attachment_info(
+                    cx.default_image_view(slot.produce),
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                )
             };
-
-            let slot = self
-                ._slots
-                .color_attachments
-                .get(&att.label)
-                .expect("no such attachment");
-
-            vk::RenderingAttachmentInfo::default()
-                .image_view(cx.default_image_view(slot.produce))
-                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .resolve_mode(vk::ResolveModeFlags::NONE)
-                .load_op(load_op)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .clear_value(vk::ClearValue { color: clear_color })
-        };
 
         let color_attachments = self
             .pass
@@ -182,7 +211,7 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
             .collect::<Vec<_>>();
 
         let color_att_0 = self
-            ._slots
+            .slots
             .color_attachments
             .get(&self.pass.color_attachments()[0].label)
             .expect("no color attachment");
@@ -192,19 +221,33 @@ unsafe impl<R: RenderPass + 'static> Node for RenderPassNode<R> {
             extent: *cx.image_info(color_att_0.produce).extent.as_2d().unwrap(),
         };
 
-        let rendering_info = vk::RenderingInfo::default()
+        let mut rendering_info = vk::RenderingInfo::default()
             .flags(vk::RenderingFlags::empty())
             .render_area(render_area)
             .layer_count(1)
             .view_mask(0)
             .color_attachments(&color_attachments);
 
+        let depth_attachment_info;
+
+        if let Some(depth_attachment) = self.pass.depth_attachment() {
+            let ds_slot = self
+                .slots
+                .depth_stencil_attachment
+                .as_ref()
+                .expect("node missing depth/stencil attachment");
+            let img = cx.default_image_view(ds_slot.produce);
+
+            depth_attachment_info = depth_attachment
+                .rendering_attachment_info(img, vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL);
+
+            rendering_info = rendering_info.depth_attachment(&depth_attachment_info);
+        }
+
         // TODO
-        // if let Some(depth) = depth_attachment {
-        //     render_info = render_info.depth_attachment(&depth);
-        // }
-        // if let Some(stencil) = stencil_attachment {
-        //     render_info = render_info.stencil_attachment(&stencil);
+        // if let Some(stencil_attachment) = self.pass.stencil_attachment {
+        //     rendering_info = rendering_info
+        //         .stencil_attachment(&stencil_attachment.rendering_attachment_info());
         // }
 
         let device = cx.device().clone();
@@ -257,7 +300,14 @@ pub enum ClearColor {
     UInt([u32; 4]),
 }
 
+impl Default for ClearColor {
+    fn default() -> Self {
+        ClearColor::Float([0.0; 4])
+    }
+}
+
 impl From<ClearColor> for vk::ClearColorValue {
+    #[inline]
     fn from(value: ClearColor) -> Self {
         match value {
             ClearColor::Float(f) => vk::ClearColorValue { float32: f },
@@ -267,7 +317,50 @@ impl From<ClearColor> for vk::ClearColorValue {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+impl From<ClearColor> for vk::ClearValue {
+    #[inline]
+    fn from(value: ClearColor) -> Self {
+        vk::ClearValue {
+            color: value.into(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ClearDepthStencilValue {
+    pub depth: f32,
+    pub stencil: u32,
+}
+
+impl Default for ClearDepthStencilValue {
+    fn default() -> Self {
+        ClearDepthStencilValue {
+            depth: 0.0,
+            stencil: 0,
+        }
+    }
+}
+
+impl From<ClearDepthStencilValue> for vk::ClearDepthStencilValue {
+    #[inline]
+    fn from(value: ClearDepthStencilValue) -> Self {
+        vk::ClearDepthStencilValue {
+            depth: value.depth,
+            stencil: value.stencil,
+        }
+    }
+}
+
+impl From<ClearDepthStencilValue> for vk::ClearValue {
+    #[inline]
+    fn from(value: ClearDepthStencilValue) -> Self {
+        vk::ClearValue {
+            depth_stencil: value.into(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum LoadOp<T> {
     Load,
     Clear(T),
@@ -284,6 +377,30 @@ impl<T> From<LoadOp<T>> for vk::AttachmentLoadOp {
     }
 }
 
+impl<T: Copy> LoadOp<T> {
+    pub fn clear_value(&self) -> Option<T> {
+        match self {
+            LoadOp::Clear(value) => Some(*value),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum StoreOp {
+    Store,
+    DontCare,
+}
+
+impl From<StoreOp> for vk::AttachmentStoreOp {
+    fn from(value: StoreOp) -> Self {
+        match value {
+            StoreOp::Store => vk::AttachmentStoreOp::STORE,
+            StoreOp::DontCare => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+}
+
 pub struct OutputAttachmentInfo<T> {
     /// The label of the output attachment.
     ///
@@ -295,17 +412,44 @@ pub struct OutputAttachmentInfo<T> {
     /// If `None`, the format is inferred.
     pub format: Option<vk::Format>,
 
-    /// The load operation used to load the attachment.
+    /// The load operation for the attachment.
     pub load_op: LoadOp<T>,
+
+    /// The store operation for the attachment.
+    pub store_op: StoreOp,
+}
+
+impl<T> OutputAttachmentInfo<T>
+where
+    T: Into<vk::ClearValue> + Default + Copy,
+{
+    fn rendering_attachment_info(
+        &self,
+        image_view: vk::ImageView,
+        image_layout: vk::ImageLayout,
+    ) -> vk::RenderingAttachmentInfo<'static> {
+        let clear_color = self.load_op.clear_value().unwrap_or_default();
+
+        vk::RenderingAttachmentInfo::default()
+            .image_view(image_view)
+            .image_layout(image_layout)
+            // TODO
+            .resolve_mode(vk::ResolveModeFlags::NONE)
+            .load_op(self.load_op.into())
+            .store_op(self.store_op.into())
+            .clear_value(clear_color.into())
+    }
 }
 
 pub type ColorAttachmentInfo = OutputAttachmentInfo<ClearColor>;
+pub type DepthStencilAttachmentInfo = OutputAttachmentInfo<ClearDepthStencilValue>;
 
 pub trait GraphicsPipeline {
     fn vertex_info(&self) -> GraphicsPipelineVertexInfo;
     fn primitive_info(&self) -> GraphicsPipelinePrimitiveInfo;
     fn fragment_info(&self) -> GraphicsPipelineFragmentInfo;
     fn attachment_info(&self) -> GraphicsPipelineAttachmentInfo;
+    fn depth_stencil_info(&self) -> GraphicsPipelineDepthStencilInfo;
 
     fn debug_label(&self) -> CString {
         c"[unlabeled graphics pipeline]".into()
@@ -336,6 +480,11 @@ pub struct GraphicsPipelineAttachmentInfo {
     pub color: Vec<vk::Format>,
     pub depth: vk::Format,
     pub stencil: vk::Format,
+}
+
+pub struct GraphicsPipelineDepthStencilInfo {
+    pub depth_write_enable: bool,
+    pub compare_op: Option<vk::CompareOp>,
 }
 
 pub struct GraphicsPipelineStorage {
@@ -373,6 +522,7 @@ where
     let primitive_info = pipeline.primitive_info();
     let fragment_info = pipeline.fragment_info();
     let attachment_info = pipeline.attachment_info();
+    let depth_stencil_info = pipeline.depth_stencil_info();
 
     let vert_module = unsafe {
         device
@@ -453,9 +603,13 @@ where
         .alpha_to_one_enable(false);
 
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(false)
-        .depth_write_enable(false)
-        .depth_compare_op(vk::CompareOp::ALWAYS)
+        .depth_test_enable(depth_stencil_info.compare_op.is_some())
+        .depth_write_enable(depth_stencil_info.depth_write_enable)
+        .depth_compare_op(
+            depth_stencil_info
+                .compare_op
+                .unwrap_or(vk::CompareOp::ALWAYS),
+        )
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false)
         .front(vk::StencilOpState {

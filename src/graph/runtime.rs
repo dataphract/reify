@@ -6,7 +6,7 @@ use tracing_log::log;
 use crate::{
     arena::ArenaMap,
     graph::{node::NodeContext, Graph, GraphImage},
-    image::{ImageInfo, ImageTiling},
+    image::{self, FormatExt, ImageInfo, ImageTiling},
     misc::IMAGE_SUBRESOURCE_RANGE_FULL_COLOR,
     transient::TransientResources,
     Device, FrameContext,
@@ -120,9 +120,11 @@ impl Runtime {
                 let range;
                 match self.image_bindings.get(out.image) {
                     ImageBinding::Transient => {
-                        img = self.transient[self.transient_idx()].get(out.image).handle;
-                        range = IMAGE_SUBRESOURCE_RANGE_FULL_COLOR;
+                        let storage = self.transient[self.transient_idx()].get(out.image);
+                        img = storage.handle;
+                        range = image::subresource_range_full(storage.info.format.aspects());
                     }
+
                     ImageBinding::Swapchain => {
                         img = cx.swapchain_image().image;
                         range = IMAGE_SUBRESOURCE_RANGE_FULL_COLOR;

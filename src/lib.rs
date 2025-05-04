@@ -24,7 +24,7 @@ pub use frame::FrameContext;
 mod graph;
 pub use graph::{builder::GraphEditor, Graph, GraphImageInfo, Runtime};
 
-mod image;
+pub mod image;
 
 mod instance;
 pub use instance::instance;
@@ -33,9 +33,11 @@ mod misc;
 
 mod render_pass;
 pub use render_pass::{
-    ClearColor, ColorAttachmentInfo, GraphicsPipeline, GraphicsPipelineAttachmentInfo,
+    ClearColor, ClearDepthStencilValue, ColorAttachmentInfo, DepthStencilAttachmentInfo,
+    GraphicsPipeline, GraphicsPipelineAttachmentInfo, GraphicsPipelineDepthStencilInfo,
     GraphicsPipelineFragmentInfo, GraphicsPipelineInstance, GraphicsPipelinePrimitiveInfo,
     GraphicsPipelineVertexInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
+    StoreOp,
 };
 
 mod transfer;

@@ -70,9 +70,6 @@ impl GraphEditor {
         }
     }
 
-    /// Inserts all dependencies of `node_key` into the dependency tree.
-    fn insert_deps(&self, node_key: arena::Key<BoxNode>, dep_graph: &mut GraphBuilder) {}
-
     pub fn add_image(&mut self, label: String, info: GraphImageInfo) -> GraphImage {
         let key = self.images.alloc(info);
         self.image_access.insert(key, ImageAccesses::default());
