@@ -38,6 +38,8 @@ pub use ops::{
     },
 };
 
+mod pool;
+
 mod resource;
 pub use resource::{image, transient};
 
