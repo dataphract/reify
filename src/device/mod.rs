@@ -1,8 +1,8 @@
 use std::{
     ffi::{c_char, CStr},
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -20,11 +20,7 @@ use gpu_allocator::{
 };
 use tracing_log::log;
 
-// Graphics + present, compute, transfer.
-//
-// TODO(dp): there are almost certainly cases where multiple compute queues are desirable, and
-// possibly similar cases for multiple graphics queues, so this is subject to change or removal.
-const _MAX_DEVICE_QUEUES: usize = 3;
+use crate::resource::buffer::{BufferInfo, BufferKey, BufferPool};
 
 // TODO(dp): this should become an array to support multiple devices in use at once. Device loss can
 // be handled with generational indices, if desired.
@@ -209,16 +205,20 @@ impl PhysicalDevice {
         let download_queue = single_queue.clone();
         let queues = vec![unsafe { QueueStorage::create(&device, queue) }];
 
+        // TODO: custom capacity
+        let buffers = RwLock::new(BufferPool::with_capacity(65536));
+
         let res = DEVICE.set(DeviceStorage {
             phys_device: self.clone(),
             graphics_queue,
             upload_queue,
             _download_queue: download_queue,
             queues,
-            raw: device,
+            ash: device,
             khr_swapchain,
             ext_debug_utils,
             allocator: Mutex::new(allocator),
+            buffers,
         });
 
         assert!(res.is_ok());
@@ -243,14 +243,32 @@ struct DeviceStorage {
 
     queues: Vec<QueueStorage>,
 
-    raw: ash::Device,
+    ash: ash::Device,
     khr_swapchain: khr::swapchain::Device,
     ext_debug_utils: ext::debug_utils::Device,
 
     allocator: Mutex<gpu_allocator::vulkan::Allocator>,
+
+    // TODO(dp): I don't like this locking scheme.
+    //
+    // Ideally, there should be a batch interface for ownership transfer, and retrieving data about
+    // a resource you already own shouldn't involve any lock contention.
+    buffers: RwLock<BufferPool>,
 }
 
 impl Device {
+    pub fn ash_device(&self) -> &ash::Device {
+        &self.storage().ash
+    }
+
+    pub(crate) fn buffers(&self) -> RwLockReadGuard<'_, BufferPool> {
+        self.storage().buffers.read().unwrap()
+    }
+
+    pub(crate) fn buffers_mut(&mut self) -> RwLockWriteGuard<'_, BufferPool> {
+        self.storage().buffers.write().unwrap()
+    }
+
     pub fn allocate(&self, desc: &GpuAllocationCreateDesc) -> gpu_allocator::Result<GpuAllocation> {
         self.storage().allocator.lock().unwrap().allocate(desc)
     }
@@ -282,6 +300,10 @@ impl Device {
         self.storage()
             .ext_debug_utils
             .cmd_end_debug_utils_label(command_buffer)
+    }
+
+    pub fn create_buffer(&self, info: BufferInfo) -> Option<BufferKey> {
+        self.storage().buffers.write().unwrap().create(self, info)
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -338,7 +360,7 @@ impl Device {
 
     #[tracing::instrument(name = "Device::queue_wait_idle", skip_all)]
     unsafe fn queue_wait_idle(&self, queue: vk::Queue) -> VkResult<()> {
-        unsafe { DEVICE.get().unwrap().raw.queue_wait_idle(queue) }
+        unsafe { DEVICE.get().unwrap().ash.queue_wait_idle(queue) }
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -488,7 +510,6 @@ device_delegate! {
 // NOTE: Only add methods here if there is no external synchronization requirement on the device.
 device_delegate_no_alloc_callbacks! {
     impl Device {
-        pub unsafe fn create_buffer(info: &vk::BufferCreateInfo) -> VkResult<vk::Buffer>;
         pub unsafe fn create_command_pool(
             info: &vk::CommandPoolCreateInfo,
         ) -> VkResult<vk::CommandPool>;
@@ -544,7 +565,7 @@ macro_rules! device_delegate {
                 #[allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
                 $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
                     // SAFETY: upheld by outer contract.
-                    unsafe { DEVICE.get().unwrap().raw.$name($($param),*) }
+                    unsafe { DEVICE.get().unwrap().ash.$name($($param),*) }
                 }
             )*
         }
@@ -556,7 +577,7 @@ macro_rules! device_delegate {
                 #[allow(clippy::too_many_arguments)]
                 $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
                     // SAFETY: upheld by outer contract.
-                    unsafe { self.raw.$name($($param),*) }
+                    unsafe { self.ash.$name($($param),*) }
                 }
             )*
         }
@@ -596,7 +617,7 @@ macro_rules! device_delegate_no_alloc_callbacks {
                 #[allow(clippy::too_many_arguments)]
                 $v unsafe fn $name(&self, $($param: $param_ty),*) $(-> $ret_ty)? {
                     // SAFETY: upheld by outer contract.
-                    unsafe { self.raw.$name($($param,)* None) }
+                    unsafe { self.ash.$name($($param,)* None) }
                 }
             )*
         }
@@ -644,7 +665,7 @@ impl QueueStorage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Queue {
     /// The queue family to which the queue belongs.
     family: QueueFamily,
@@ -724,7 +745,7 @@ impl Queue {
         let queue_guard = self.storage().handle.lock().unwrap();
 
         let res = unsafe {
-            self.device().storage().raw.queue_submit2(
+            self.device().storage().ash.queue_submit2(
                 *queue_guard,
                 submits,
                 fence.unwrap_or(vk::Fence::null()),
@@ -750,8 +771,72 @@ impl Queue {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SubmissionId {
-    queue: Queue,
-    timeline_value: u64,
+    pub(crate) queue: Queue,
+    pub(crate) timeline_value: u64,
+}
+
+/// Unique ID identifying the owner of a resource.
+///
+/// This is used in cold paths for verifying ownership of a resource. Current users include graphs
+/// and upload/download schedulers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct OwnerId(u16);
+
+static NEXT_OWNER: AtomicU32 = AtomicU32::new(1);
+
+impl OwnerId {
+    pub const NONE: OwnerId = OwnerId(0);
+
+    #[inline]
+    pub fn new() -> Self {
+        // It doesn't matter what order the IDs are acquired in, only that they are unique. Thus
+        // `Ordering::Relaxed` is sufficient.
+        let value: u16 = NEXT_OWNER
+            .fetch_add(1, Ordering::Relaxed)
+            .try_into()
+            .expect("OwnerIDs exhausted");
+
+        OwnerId(value)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Ownership<T> {
+    owner: Option<OwnerId>,
+    state: T,
+}
+
+impl<T: Clone> Ownership<T> {
+    #[inline]
+    pub(crate) fn new(state: T) -> Self {
+        Ownership { owner: None, state }
+    }
+
+    #[inline]
+    pub(crate) fn owner(&self) -> Option<OwnerId> {
+        self.owner
+    }
+
+    pub(crate) fn acquire(&mut self, owner: OwnerId) -> &T {
+        match self.owner {
+            // TODO: error
+            Some(o) => assert_eq!(o, owner),
+            None => self.owner = Some(owner),
+        }
+
+        &self.state
+    }
+
+    pub(crate) fn release(&mut self, owner: OwnerId, state: Option<T>) {
+        match self.owner.take() {
+            Some(o) => assert_eq!(o, owner),
+            None => panic!("im not owned! im not owned!!"),
+        }
+
+        if let Some(state) = state {
+            self.state = state;
+        }
+    }
 }
