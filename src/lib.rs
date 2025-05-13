@@ -7,9 +7,6 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 
 mod arena;
 
-mod blit;
-pub use blit::BlitNode;
-
 mod depgraph;
 
 mod device;
@@ -24,26 +21,28 @@ pub use frame::FrameContext;
 mod graph;
 pub use graph::{builder::GraphEditor, Graph, GraphImageInfo, Runtime};
 
-pub mod image;
-
 mod instance;
 pub use instance::instance;
 
 mod misc;
 
-mod render_pass;
-pub use render_pass::{
-    ClearColor, ClearDepthStencilValue, ColorAttachmentInfo, DepthStencilAttachmentInfo,
-    GraphicsPipeline, GraphicsPipelineAttachmentInfo, GraphicsPipelineDepthStencilInfo,
-    GraphicsPipelineFragmentInfo, GraphicsPipelineInstance, GraphicsPipelinePrimitiveInfo,
-    GraphicsPipelineVertexInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
-    StoreOp,
+mod ops;
+pub use ops::{
+    blit::BlitNode,
+    render_pass::{
+        ClearColor, ClearDepthStencilValue, ColorAttachmentInfo, DepthStencilAttachmentInfo,
+        GraphicsPipeline, GraphicsPipelineAttachmentInfo, GraphicsPipelineDepthStencilInfo,
+        GraphicsPipelineFragmentInfo, GraphicsPipelineInstance, GraphicsPipelinePrimitiveInfo,
+        GraphicsPipelineVertexInfo, LoadOp, OutputAttachmentInfo, RenderPass, RenderPassBuilder,
+        StoreOp,
+    },
 };
+
+mod resource;
+pub use resource::{image, transient};
 
 mod transfer;
 pub use transfer::{UploadPool, UploadPoolInfo};
-
-mod transient;
 
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 
