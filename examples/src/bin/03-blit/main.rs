@@ -1,27 +1,27 @@
 use ash::vk;
 use examples::{TrianglePipeline, TriangleRenderPass};
-use reify2::BlitNode;
+use reify::BlitNode;
 
 fn main() {
     examples::AppRunner::<BlitApp>::new().run();
 }
 
 struct BlitApp {
-    runtime: reify2::Runtime,
+    runtime: reify::Runtime,
 }
 
 impl examples::App for BlitApp {
-    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> BlitApp {
+    fn create_app(device: &reify::Device, display_info: &reify::DisplayInfo) -> BlitApp {
         let triangle_pipeline = TrianglePipeline::new(
             display_info.surface_format.format,
             [[-0.5, -0.5, 1.0], [0.5, -0.5, 1.0], [0.0, 0.5, 1.0]],
         );
 
-        let mut graph = reify2::GraphEditor::new();
+        let mut graph = reify::GraphEditor::new();
 
         let triangle_out_color = graph.add_image(
             "triangle_out_color".into(),
-            reify2::GraphImageInfo {
+            reify::GraphImageInfo {
                 format: vk::Format::B8G8R8A8_SRGB,
                 extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
@@ -35,7 +35,7 @@ impl examples::App for BlitApp {
 
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
-            reify2::GraphImageInfo {
+            reify::GraphImageInfo {
                 format: display_info.surface_format.format,
                 extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
@@ -47,12 +47,12 @@ impl examples::App for BlitApp {
         );
 
         let graph = graph.build(swapchain_image);
-        let runtime = reify2::Runtime::new(device.clone(), graph);
+        let runtime = reify::Runtime::new(device.clone(), graph);
 
         BlitApp { runtime }
     }
 
-    fn runtime(&mut self) -> &mut reify2::Runtime {
+    fn runtime(&mut self) -> &mut reify::Runtime {
         &mut self.runtime
     }
 }

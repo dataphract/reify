@@ -1,12 +1,10 @@
 [package]
-name = "reify2"
+name = "reify"
 version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [
-    "examples",
-]
+members = ["examples"]
 
 [workspace.dependencies]
 ash = "0.38.0"
@@ -18,7 +16,7 @@ gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator.git"
 id-arena = "2.2.1"
 naga = { version = "0.20.0" }
 raw-window-handle = "0.6.2"
-reify2 = { path = "." }
+reify = { path = "." }
 tracing = "0.1.40"
 tracing-log = "0.2.0"
 

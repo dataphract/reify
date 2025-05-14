@@ -3,7 +3,7 @@ use std::ffi::CString;
 use ash::vk;
 use examples::GlslCompiler;
 use naga::ShaderStage;
-use reify2::{ClearDepthStencilValue, StoreOp};
+use reify::{ClearDepthStencilValue, StoreOp};
 
 fn main() {
     examples::AppRunner::<DepthApp>::new().run();
@@ -21,16 +21,16 @@ const COLORS: [[f32; 3]; 3] = [[1.0, 0.2, 0.1], [0.2, 1.0, 0.1], [0.2, 0.2, 1.0]
 const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
 struct DepthApp {
-    runtime: reify2::Runtime,
+    runtime: reify::Runtime,
 }
 
 impl examples::App for DepthApp {
-    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> DepthApp {
-        let mut graph = reify2::GraphEditor::new();
+    fn create_app(device: &reify::Device, display_info: &reify::DisplayInfo) -> DepthApp {
+        let mut graph = reify::GraphEditor::new();
 
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
-            reify2::GraphImageInfo {
+            reify::GraphImageInfo {
                 format: display_info.surface_format.format,
                 extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
@@ -38,7 +38,7 @@ impl examples::App for DepthApp {
 
         let depth_attachment = graph.add_image(
             "depth_attachment".into(),
-            reify2::GraphImageInfo {
+            reify::GraphImageInfo {
                 format: DEPTH_FORMAT,
                 extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
@@ -65,34 +65,34 @@ impl examples::App for DepthApp {
             .build();
 
         let graph = graph.build(swapchain_image);
-        let runtime = reify2::Runtime::new(device.clone(), graph);
+        let runtime = reify::Runtime::new(device.clone(), graph);
 
         DepthApp { runtime }
     }
 
-    fn runtime(&mut self) -> &mut reify2::Runtime {
+    fn runtime(&mut self) -> &mut reify::Runtime {
         &mut self.runtime
     }
 }
 
 pub struct DepthRenderPass {
-    color_attachments: [reify2::ColorAttachmentInfo; 1],
-    depth_attachment: reify2::DepthStencilAttachmentInfo,
+    color_attachments: [reify::ColorAttachmentInfo; 1],
+    depth_attachment: reify::DepthStencilAttachmentInfo,
 }
 
 impl Default for DepthRenderPass {
     fn default() -> Self {
         Self {
-            color_attachments: [reify2::ColorAttachmentInfo {
+            color_attachments: [reify::ColorAttachmentInfo {
                 label: "out_color".into(),
                 format: None,
-                load_op: reify2::LoadOp::Clear(reify2::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
+                load_op: reify::LoadOp::Clear(reify::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
                 store_op: StoreOp::Store,
             }],
-            depth_attachment: reify2::DepthStencilAttachmentInfo {
+            depth_attachment: reify::DepthStencilAttachmentInfo {
                 label: "out_depth".into(),
                 format: Some(DEPTH_FORMAT),
-                load_op: reify2::LoadOp::Clear(ClearDepthStencilValue {
+                load_op: reify::LoadOp::Clear(ClearDepthStencilValue {
                     depth: 1.0,
                     stencil: 0,
                 }),
@@ -102,12 +102,12 @@ impl Default for DepthRenderPass {
     }
 }
 
-impl reify2::RenderPass for DepthRenderPass {
-    fn color_attachments(&self) -> &[reify2::ColorAttachmentInfo] {
+impl reify::RenderPass for DepthRenderPass {
+    fn color_attachments(&self) -> &[reify::ColorAttachmentInfo] {
         &self.color_attachments
     }
 
-    fn depth_attachment(&self) -> Option<&reify2::DepthStencilAttachmentInfo> {
+    fn depth_attachment(&self) -> Option<&reify::DepthStencilAttachmentInfo> {
         Some(&self.depth_attachment)
     }
 
@@ -175,16 +175,16 @@ void main() {{
     }
 }
 
-impl reify2::GraphicsPipeline for DepthPipeline {
-    fn vertex_info(&self) -> reify2::GraphicsPipelineVertexInfo {
-        reify2::GraphicsPipelineVertexInfo {
+impl reify::GraphicsPipeline for DepthPipeline {
+    fn vertex_info(&self) -> reify::GraphicsPipelineVertexInfo {
+        reify::GraphicsPipelineVertexInfo {
             shader_spv: self.vert_spv.clone(),
             entry: c"main".into(),
         }
     }
 
-    fn primitive_info(&self) -> reify2::GraphicsPipelinePrimitiveInfo {
-        reify2::GraphicsPipelinePrimitiveInfo {
+    fn primitive_info(&self) -> reify::GraphicsPipelinePrimitiveInfo {
+        reify::GraphicsPipelinePrimitiveInfo {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             primitive_restart_enable: false,
             polygon_mode: vk::PolygonMode::FILL,
@@ -193,23 +193,23 @@ impl reify2::GraphicsPipeline for DepthPipeline {
         }
     }
 
-    fn fragment_info(&self) -> reify2::GraphicsPipelineFragmentInfo {
-        reify2::GraphicsPipelineFragmentInfo {
+    fn fragment_info(&self) -> reify::GraphicsPipelineFragmentInfo {
+        reify::GraphicsPipelineFragmentInfo {
             shader_spv: self.frag_spv.clone(),
             entry: c"main".into(),
         }
     }
 
-    fn attachment_info(&self) -> reify2::GraphicsPipelineAttachmentInfo {
-        reify2::GraphicsPipelineAttachmentInfo {
+    fn attachment_info(&self) -> reify::GraphicsPipelineAttachmentInfo {
+        reify::GraphicsPipelineAttachmentInfo {
             color: vec![self.color_format],
             depth: DEPTH_FORMAT,
             stencil: vk::Format::UNDEFINED,
         }
     }
 
-    fn depth_stencil_info(&self) -> reify2::GraphicsPipelineDepthStencilInfo {
-        reify2::GraphicsPipelineDepthStencilInfo {
+    fn depth_stencil_info(&self) -> reify::GraphicsPipelineDepthStencilInfo {
+        reify::GraphicsPipelineDepthStencilInfo {
             depth_write_enable: true,
             compare_op: Some(vk::CompareOp::LESS),
         }
@@ -219,7 +219,7 @@ impl reify2::GraphicsPipeline for DepthPipeline {
         c"triangle_pipeline".into()
     }
 
-    fn execute(&self, pipe: &mut reify2::GraphicsPipelineInstance) {
+    fn execute(&self, pipe: &mut reify::GraphicsPipelineInstance) {
         pipe.draw(3, 0);
     }
 }

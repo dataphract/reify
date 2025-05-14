@@ -7,20 +7,20 @@ fn main() {
 }
 
 struct TriangleApp {
-    runtime: reify2::Runtime,
+    runtime: reify::Runtime,
 }
 
 impl examples::App for TriangleApp {
-    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> TriangleApp {
+    fn create_app(device: &reify::Device, display_info: &reify::DisplayInfo) -> TriangleApp {
         let triangle_pipeline = TrianglePipeline::new(
             display_info.surface_format.format,
             [[-0.5, -0.5, 1.0], [0.5, -0.5, 1.0], [0.0, 0.5, 1.0]],
         );
 
-        let mut graph = reify2::GraphEditor::new();
+        let mut graph = reify::GraphEditor::new();
         let swapchain_image = graph.add_image(
             "swapchain_image".into(),
-            reify2::GraphImageInfo {
+            reify::GraphImageInfo {
                 format: display_info.surface_format.format,
                 extent: *display_info.image_info.extent.as_2d().unwrap(),
             },
@@ -33,12 +33,12 @@ impl examples::App for TriangleApp {
             .build();
 
         let graph = graph.build(swapchain_image);
-        let runtime = reify2::Runtime::new(device.clone(), graph);
+        let runtime = reify::Runtime::new(device.clone(), graph);
 
         TriangleApp { runtime }
     }
 
-    fn runtime(&mut self) -> &mut reify2::Runtime {
+    fn runtime(&mut self) -> &mut reify::Runtime {
         &mut self.runtime
     }
 }

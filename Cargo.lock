@@ -375,7 +375,7 @@ dependencies = [
  "gpu-allocator",
  "naga",
  "pretty_env_logger",
- "reify2",
+ "reify",
  "tracing",
  "tracing-log",
  "tracing-subscriber",
@@ -1035,7 +1035,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adad44e29e4c806119491a7f06f03de4d1af22c3a680dd47f1e6e179439d1f56"
 
 [[package]]
-name = "reify2"
+name = "reify"
 version = "0.1.0"
 dependencies = [
  "ash",

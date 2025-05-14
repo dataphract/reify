@@ -9,17 +9,17 @@ use winit::{
 };
 
 pub trait App {
-    fn create_app(device: &reify2::Device, display_info: &reify2::DisplayInfo) -> Self;
-    fn runtime(&mut self) -> &mut reify2::Runtime;
+    fn create_app(device: &reify::Device, display_info: &reify::DisplayInfo) -> Self;
+    fn runtime(&mut self) -> &mut reify::Runtime;
 }
 
 // Generic app runner.
 //
 // This handles the non-rendering application logic like windowing and event loop handling.
 pub struct AppRunner<A> {
-    device: reify2::Device,
+    device: reify::Device,
     window: Option<Window>,
-    display: Option<reify2::Display>,
+    display: Option<reify::Display>,
 
     app: Option<A>,
 }
@@ -39,7 +39,7 @@ impl<A: App> AppRunner<A> {
 
         pretty_env_logger::init();
 
-        let phys_device = reify2::PhysicalDevice::new();
+        let phys_device = reify::PhysicalDevice::new();
         let device = phys_device.create_device();
 
         AppRunner {
@@ -63,11 +63,11 @@ impl<A: App> AppRunner<A> {
 
     pub fn create_window(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes()
-            .with_title("reify2")
+            .with_title("reify")
             .with_inner_size(winit::dpi::LogicalSize::new(1600, 900));
 
         let window = event_loop.create_window(attr).unwrap();
-        let surface = reify2::create_surface(&window);
+        let surface = reify::create_surface(&window);
 
         let inner_size = window.inner_size();
         let extent = vk::Extent2D {
@@ -75,7 +75,7 @@ impl<A: App> AppRunner<A> {
             height: inner_size.height,
         };
 
-        let display = unsafe { reify2::Display::create(&self.device, surface, extent) };
+        let display = unsafe { reify::Display::create(&self.device, surface, extent) };
 
         self.app = Some(A::create_app(&self.device, display.info()));
         self.window = Some(window);
@@ -192,24 +192,24 @@ impl GlslCompiler {
 }
 
 pub struct TriangleRenderPass {
-    color_attachments: [reify2::ColorAttachmentInfo; 1],
+    color_attachments: [reify::ColorAttachmentInfo; 1],
 }
 
 impl Default for TriangleRenderPass {
     fn default() -> Self {
         Self {
-            color_attachments: [reify2::ColorAttachmentInfo {
+            color_attachments: [reify::ColorAttachmentInfo {
                 label: "out_color".into(),
                 format: None,
-                load_op: reify2::LoadOp::Clear(reify2::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
-                store_op: reify2::StoreOp::Store,
+                load_op: reify::LoadOp::Clear(reify::ClearColor::Float([0.0, 0.0, 0.0, 1.0])),
+                store_op: reify::StoreOp::Store,
             }],
         }
     }
 }
 
-impl reify2::RenderPass for TriangleRenderPass {
-    fn color_attachments(&self) -> &[reify2::ColorAttachmentInfo] {
+impl reify::RenderPass for TriangleRenderPass {
+    fn color_attachments(&self) -> &[reify::ColorAttachmentInfo] {
         &self.color_attachments
     }
 
@@ -269,16 +269,16 @@ void main() {
     }
 }
 
-impl reify2::GraphicsPipeline for TrianglePipeline {
-    fn vertex_info(&self) -> reify2::GraphicsPipelineVertexInfo {
-        reify2::GraphicsPipelineVertexInfo {
+impl reify::GraphicsPipeline for TrianglePipeline {
+    fn vertex_info(&self) -> reify::GraphicsPipelineVertexInfo {
+        reify::GraphicsPipelineVertexInfo {
             shader_spv: self.vert_spv.clone(),
             entry: c"main".into(),
         }
     }
 
-    fn primitive_info(&self) -> reify2::GraphicsPipelinePrimitiveInfo {
-        reify2::GraphicsPipelinePrimitiveInfo {
+    fn primitive_info(&self) -> reify::GraphicsPipelinePrimitiveInfo {
+        reify::GraphicsPipelinePrimitiveInfo {
             topology: vk::PrimitiveTopology::TRIANGLE_LIST,
             primitive_restart_enable: false,
             polygon_mode: vk::PolygonMode::FILL,
@@ -287,23 +287,23 @@ impl reify2::GraphicsPipeline for TrianglePipeline {
         }
     }
 
-    fn fragment_info(&self) -> reify2::GraphicsPipelineFragmentInfo {
-        reify2::GraphicsPipelineFragmentInfo {
+    fn fragment_info(&self) -> reify::GraphicsPipelineFragmentInfo {
+        reify::GraphicsPipelineFragmentInfo {
             shader_spv: self.frag_spv.clone(),
             entry: c"main".into(),
         }
     }
 
-    fn attachment_info(&self) -> reify2::GraphicsPipelineAttachmentInfo {
-        reify2::GraphicsPipelineAttachmentInfo {
+    fn attachment_info(&self) -> reify::GraphicsPipelineAttachmentInfo {
+        reify::GraphicsPipelineAttachmentInfo {
             color: vec![self.color_format],
             depth: vk::Format::UNDEFINED,
             stencil: vk::Format::UNDEFINED,
         }
     }
 
-    fn depth_stencil_info(&self) -> reify2::GraphicsPipelineDepthStencilInfo {
-        reify2::GraphicsPipelineDepthStencilInfo {
+    fn depth_stencil_info(&self) -> reify::GraphicsPipelineDepthStencilInfo {
+        reify::GraphicsPipelineDepthStencilInfo {
             depth_write_enable: false,
             compare_op: None,
         }
@@ -313,7 +313,7 @@ impl reify2::GraphicsPipeline for TrianglePipeline {
         c"triangle_pipeline".into()
     }
 
-    fn execute(&self, pipe: &mut reify2::GraphicsPipelineInstance) {
+    fn execute(&self, pipe: &mut reify::GraphicsPipelineInstance) {
         pipe.draw(3, 0);
     }
 }
