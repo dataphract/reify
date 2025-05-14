@@ -43,6 +43,9 @@ mod pool;
 mod resource;
 pub use resource::{buffer, image, transient};
 
+mod transfer;
+pub use transfer::{UploadPool, UploadPoolInfo};
+
 static ENTRY: OnceLock<ash::Entry> = OnceLock::new();
 
 pub fn entry() -> &'static ash::Entry {
