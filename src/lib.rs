@@ -7,6 +7,11 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 
 mod arena;
 
+mod error;
+pub use error::Error;
+
+mod draw;
+
 mod depgraph;
 
 mod device;

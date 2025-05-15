@@ -1,3 +1,5 @@
+// Interface for high-throughput transfers between host and device.
+
 use std::{
     alloc::Layout,
     cmp,
@@ -64,7 +66,7 @@ pub(crate) struct UploadBuffer {
     //
     // When an upload to a buffer is scheduled, the upload pool takes ownership of the destination
     // buffer, and its initial sync state is stored here. When all scheduled uploads to that buffer
-    // are completed, the entry is removed, and ownership is released.
+    // are submitted, the entry is removed, and ownership is released.
     buffer_ownership: HashMap<BufferKey, BufferSyncState>,
 
     // Command pool backing `cmd_buf`.
@@ -112,7 +114,7 @@ impl UploadBuffer {
                 name: &info.label,
                 requirements,
                 // TODO(dp): gpu_allocator doesn't accept enough detail to pick a good memory
-                // type here. On RDNA, this will almost certainly allocate from the tiny pool of
+                // type here. On RDNA, CpuToGpu will almost certainly allocate from the tiny pool of
                 // host-local, device-visible memory, which is only 256 MB. That makes it
                 // impossible to saturate the PCI bus. Should swap gpu_allocator out for VMA so we
                 // have explicit control over which heap gets allocated from.
@@ -407,10 +409,13 @@ impl UploadPool {
             let a = &win[0];
 
             if a.dst_key != b.dst_key {
+                // Batch boundary at idx + 1.
                 buffer.buffer_batches.push(idx as u32 + 1);
             } else {
-                // Unchecked arithmetic is safe here because the public APIs do the checking at
-                // insertion time.
+                // Ensure the copy ranges don't overlap.
+                //
+                // Unchecked arithmetic is safe here because the public APIs check that `offset +
+                // size` doesn't overflow.
                 //
                 // TODO(dp): proper error
                 assert!(a.dst_offset + a.size <= b.dst_offset);
@@ -431,7 +436,6 @@ impl UploadPool {
                 .get(&buffer.buffer_copies[batch_start].dst_key)
                 .expect("missing ownership data");
 
-            // TODO(dp): this may not be able to elide bounds checks
             let batch = &buffer.buffer_copies[batch_start..batch_end];
             for copy in batch {
                 buffer.buffer_barrier_scratch.push(
@@ -571,8 +575,6 @@ impl UploadPool {
         let uploader = &mut self.buffers[idx];
 
         let mut buffers = self.device.buffers_mut();
-
-        buffers.acquire(dst, uploader.owner_id);
 
         let init_state = buffers
             .acquire(dst, uploader.owner_id)
