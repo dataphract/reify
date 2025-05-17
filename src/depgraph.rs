@@ -2,8 +2,6 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use tracing_log::log;
-
 use crate::arena::{self, Arena, ArenaMap};
 
 pub(crate) type EdgeKey<V> = arena::Key<Edge<V>>;

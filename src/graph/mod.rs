@@ -61,7 +61,7 @@ impl Graph {
         img: vk::Image,
         range: vk::ImageSubresourceRange,
     ) -> vk::ImageMemoryBarrier2<'_> {
-        tracing_log::log::debug!("{:?} -> {:?}", dep.old_layout, dep.new_layout);
+        log::debug!("{:?} -> {:?}", dep.old_layout, dep.new_layout);
         vk::ImageMemoryBarrier2::default()
             .src_stage_mask(dep.src_stage_mask)
             .src_access_mask(dep.src_access_mask)

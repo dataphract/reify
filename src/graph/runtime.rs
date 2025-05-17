@@ -1,7 +1,6 @@
 use std::ffi::CStr;
 
 use ash::vk;
-use tracing_log::log;
 
 use crate::{
     arena::ArenaMap,

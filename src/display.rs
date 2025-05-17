@@ -1,7 +1,6 @@
 use std::{cmp, marker::PhantomData};
 
 use ash::vk;
-use tracing_log::log;
 
 use crate::{
     frame::{FrameContext, FrameResources},

@@ -6,7 +6,6 @@ use std::{
 };
 
 use ash::{ext, khr, prelude::VkResult, vk};
-use tracing_log::log;
 
 use crate::device::extensions::InstanceExtensionFlags;
 
