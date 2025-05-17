@@ -273,6 +273,7 @@ impl Display {
     ) -> Result<FrameContext<'frame>, AcquireError<'frame>> {
         let frame_idx = self.current_frame % MAX_FRAMES_IN_FLIGHT;
         let frame = &mut self.frames[frame_idx];
+        self.current_frame += 1;
 
         let frame_cx = frame.acquire_context(device, None).unwrap();
 

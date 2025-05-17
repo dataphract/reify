@@ -116,7 +116,21 @@ impl PhysicalDevice {
         // Verify that all necessary device extensions are supported.
         let required_extensions = DeviceExtensionFlags::KHR_SWAPCHAIN;
 
-        let enabled_extension_names = required_extensions
+        let missing_extensions = required_extensions.difference(self.inner.extensions);
+
+        for name in missing_extensions.iter_ext_names() {
+            tracing::error!("missing required extension {}", name.to_str().unwrap());
+        }
+
+        let wanted_extensions = DeviceExtensionFlags::EXT_SWAPCHAIN_MAINTENANCE1;
+
+        let enabled_extensions = (required_extensions | wanted_extensions) & self.inner.extensions;
+
+        for ext in enabled_extensions.iter_ext_names() {
+            tracing::info!("enabling device extension {}", ext.to_str().unwrap());
+        }
+
+        let enabled_extension_names = enabled_extensions
             .iter_ext_names()
             .map(|c| c.as_ptr())
             .collect::<Vec<_>>();

@@ -22,6 +22,7 @@ declare_extensions! {
 
 declare_extensions! {
     pub struct DeviceExtensionFlags(ExtensionValues): u64 {
+        const EXT_SWAPCHAIN_MAINTENANCE1 = ext::swapchain_maintenance1;
         const KHR_DEDICATED_ALLOCATION = khr::dedicated_allocation;
         const KHR_SWAPCHAIN = khr::swapchain;
     }

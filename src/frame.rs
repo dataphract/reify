@@ -63,9 +63,9 @@ impl FrameResources {
 
             let all_commands_complete = device
                 .create_semaphore(&semaphore_create_info)
-                .expect("failed to create render_complete semaphore");
+                .expect("failed to create all_commands_complete semaphore");
             device
-                .set_debug_utils_object_name(all_commands_complete, c"render_complete")
+                .set_debug_utils_object_name(all_commands_complete, c"all_commands_complete")
                 .unwrap();
 
             let command_pool = device
