@@ -1,10 +1,7 @@
 use std::iter;
 
 use ash::vk;
-use gpu_allocator::{
-    vulkan::{Allocation as GpuAllocation, AllocationScheme},
-    MemoryLocation,
-};
+use vk_mem::{self as vma, Alloc};
 
 use crate::{
     device::{OwnerId, Ownership, SubmissionId},
@@ -18,7 +15,7 @@ pub struct BufferStorageHot {
 
 pub struct BufferStorageCold {
     info: BufferInfo,
-    mem: GpuAllocation,
+    mem: vma::Allocation,
     ownership: Ownership<BufferSyncState>,
 }
 
@@ -26,7 +23,16 @@ pub struct BufferStorageCold {
 pub struct BufferInfo {
     pub size: u64,
     pub usage: vk::BufferUsageFlags,
-    pub location: MemoryLocation,
+    pub class: BufferMemoryType,
+}
+
+pub enum BufferMemoryType {
+    /// Buffer is used for download of data from GPU to host.
+    Download,
+    /// Buffer is used for low-volume direct upload of constant data from host to GPU.
+    UploadConstant,
+    /// Buffer is used for staging host data for high-volume upload to GPU.
+    UploadStaging,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -125,31 +131,21 @@ impl BufferPool {
             .usage(info.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let handle = unsafe {
-            device
-                .ash_device()
-                .create_buffer(&buffer_create_info, None)
-                .expect("buffer creation failed")
+        let alloc_info = vma::AllocationCreateInfo {
+            flags: vma::AllocationCreateFlags::empty(),
+            usage: vma::MemoryUsage::Auto,
+            required_flags: vk::MemoryPropertyFlags::empty(),
+            preferred_flags: vk::MemoryPropertyFlags::empty(),
+            memory_type_bits: u32::MAX,
+            user_data: 0,
+            priority: 0.5,
         };
 
-        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
-
-        let allocation_desc = gpu_allocator::vulkan::AllocationCreateDesc {
-            name: "unnamed",
-            requirements,
-            location: info.location,
-            linear: true,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        };
-
-        let mem = device
-            .allocate(&allocation_desc)
-            .expect("allocation failed");
-
-        unsafe {
+        let (handle, mem) = unsafe {
             device
-                .bind_buffer_memory(handle, mem.memory(), 0)
-                .expect("failed to bind buffer memory")
+                .allocator()
+                .create_buffer(&buffer_create_info, &alloc_info)
+                .expect("buffer creation and allocation failed")
         };
 
         self.hot.get_mut(index).write(BufferStorageHot { handle });
@@ -179,7 +175,7 @@ impl BufferPool {
         let BufferStorageHot { handle } = unsafe { self.hot.get_mut(index).assume_init_read() };
         let BufferStorageCold {
             info: _,
-            mem,
+            mut mem,
             ownership,
         } = unsafe { self.cold.get_mut(index).assume_init_read() };
 
@@ -188,8 +184,7 @@ impl BufferPool {
             panic!("attempted to destroy resource still owned by {owner:?}");
         }
 
-        unsafe { device.destroy_buffer(handle) };
-        unsafe { device.free(mem) };
+        unsafe { device.allocator().destroy_buffer(handle, &mut mem) };
 
         self.generation[index] += 1;
         self.free_list.push(index);

@@ -9,10 +9,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use ash::vk;
-use gpu_allocator::vulkan::{
-    Allocation as GpuAllocation, AllocationCreateDesc as GpuAllocationCreateDesc,
-};
+use ash::{prelude::VkResult, vk};
+use vk_mem::{self as vma, Alloc as _};
 
 use crate::{
     buffer::{BufferKey, BufferSyncState},
@@ -29,9 +27,6 @@ pub struct UploadDst {
     offset: u64,
 }
 
-#[derive(Clone, Debug)]
-pub struct CapacityError;
-
 #[derive(Clone)]
 pub(crate) struct UploadBufferInfo {
     pub label: String,
@@ -44,7 +39,9 @@ pub(crate) struct UploadBuffer {
     // Buffer handle.
     handle: vk::Buffer,
     // Backing memory.
-    _mem: GpuAllocation,
+    mem: vma::Allocation,
+    // If false, writes need to be flushed manually at submit time.
+    is_coherent: bool,
 
     // Position in the buffer since the previous flush, in bytes.
     cursor: usize,
@@ -89,54 +86,64 @@ unsafe impl Send for UploadBuffer {}
 unsafe impl Sync for UploadBuffer {}
 
 impl UploadBuffer {
-    fn create(device: &Device, info: &UploadBufferInfo) -> UploadBuffer {
+    fn create(device: &Device, info: &UploadBufferInfo) -> VkResult<UploadBuffer> {
         let info = info.clone();
 
         // Create the buffer object.
+
         let buffer_info = vk::BufferCreateInfo::default()
             .flags(vk::BufferCreateFlags::empty())
             .size(info.size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            // Ignored due to exclusive sharing mode.
             .queue_family_indices(&[]);
-        let buffer = unsafe {
-            device
-                .ash_device()
-                .create_buffer(&buffer_info, None)
-                .unwrap()
+
+        let alloc_create_info = vma::AllocationCreateInfo {
+            flags: vma::AllocationCreateFlags::MAPPED
+                | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+            usage: vma::MemoryUsage::Auto,
+            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+            preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
+                | vk::MemoryPropertyFlags::HOST_COHERENT,
+            memory_type_bits: u32::MAX,
+            user_data: 0,
+            priority: 1.0,
         };
 
-        // Allocate and bind the backing memory for the buffer.
-        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let mem = device
-            .allocate(&GpuAllocationCreateDesc {
-                name: &info.label,
-                requirements,
-                // TODO(dp): gpu_allocator doesn't accept enough detail to pick a good memory
-                // type here. On RDNA, CpuToGpu will almost certainly allocate from the tiny pool of
-                // host-local, device-visible memory, which is only 256 MB. That makes it
-                // impossible to saturate the PCI bus. Should swap gpu_allocator out for VMA so we
-                // have explicit control over which heap gets allocated from.
-                location: gpu_allocator::MemoryLocation::CpuToGpu,
-                linear: true,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            })
-            .unwrap();
-        unsafe { device.bind_buffer_memory(buffer, mem.memory(), 0).unwrap() };
+        let (buffer, mem) = unsafe {
+            device
+                .allocator()
+                .create_buffer(&buffer_info, &alloc_create_info)?
+        };
 
-        let mapped: NonNull<u8> = mem.mapped_ptr().unwrap().cast();
+        let alloc_info = device.allocator().get_allocation_info(&mem);
+        let mem_ty = unsafe {
+            device
+                .allocator()
+                .get_memory_properties()
+                .memory_types_as_slice()[alloc_info.memory_type as usize]
+        };
+
+        let is_coherent = !mem_ty
+            .property_flags
+            .contains(vk::MemoryPropertyFlags::HOST_COHERENT);
+
+        // Retrieve a pointer to the mapped memory. If mapping failed, bail out.
+        let mapped_raw: *mut std::ffi::c_void =
+            device.allocator().get_allocation_info(&mem).mapped_data;
+        let mapped: NonNull<u8> =
+            NonNull::new(mapped_raw.cast()).ok_or(vk::Result::ERROR_MEMORY_MAP_FAILED)?;
 
         // Create a command pool and a single command buffer.
         let cmd_pool_info = vk::CommandPoolCreateInfo::default()
             .flags(vk::CommandPoolCreateFlags::TRANSIENT)
             .queue_family_index(device.upload_queue().family().as_u32());
-        let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info).unwrap() };
+        let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info)? };
         let cmd_buf_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(cmd_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
-        let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info).unwrap()[0] };
+        let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info)?[0] };
 
         // Create a timeline semaphore.
         let mut sem_type_info = vk::SemaphoreTypeCreateInfo::default()
@@ -146,12 +153,13 @@ impl UploadBuffer {
         let sem_info = vk::SemaphoreCreateInfo::default()
             .flags(vk::SemaphoreCreateFlags::empty())
             .push_next(&mut sem_type_info);
-        let timeline = unsafe { device.create_semaphore(&sem_info).unwrap() };
+        let timeline = unsafe { device.create_semaphore(&sem_info)? };
 
-        UploadBuffer {
+        Ok(UploadBuffer {
             info,
             handle: buffer,
-            _mem: mem,
+            mem,
+            is_coherent,
             cursor: 0,
             mapped,
             cmd_pool,
@@ -164,7 +172,7 @@ impl UploadBuffer {
             timeline_value: timeline_value.into(),
             owner_id: OwnerId::new(),
             buffer_ownership: HashMap::new(),
-        }
+        })
     }
 
     unsafe fn range_mut(&mut self, layout: Layout, dst: UploadDst) -> Option<UploadBufferRangeMut> {
@@ -291,7 +299,7 @@ pub struct UploadPool {
 
 impl UploadPool {
     /// Creates a new upload pool.
-    pub fn create(device: &Device, pool_info: &UploadPoolInfo) -> UploadPool {
+    pub fn create(device: &Device, pool_info: &UploadPoolInfo) -> VkResult<UploadPool> {
         let info = pool_info.clone();
 
         let create_buffer = |idx| {
@@ -303,14 +311,12 @@ impl UploadPool {
             UploadBuffer::create(device, &buf_info)
         };
 
-        let buffers = (0..info.num_buffers).map(create_buffer).collect();
+        let buffers = (0..info.num_buffers)
+            .map(create_buffer)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        let available = unsafe {
-            device
-                .create_fences(&fence_info, info.num_buffers as usize)
-                .unwrap()
-        };
+        let available = unsafe { device.create_fences(&fence_info, info.num_buffers as usize)? };
 
         let mut pool = UploadPool {
             device: device.clone(),
@@ -319,11 +325,11 @@ impl UploadPool {
             current: None,
         };
 
-        let idx = pool.wait_any_available();
+        let idx = pool.wait_any_available()?;
         pool.begin_buffer(idx);
         pool.current = Some(idx);
 
-        pool
+        Ok(pool)
     }
 
     /// Returns `true` if the buffer at index `idx` is available.
@@ -334,20 +340,19 @@ impl UploadPool {
     /// Waits for an upload buffer to become available.
     ///
     /// Returns the index of the first available buffer.
-    fn wait_any_available(&self) -> usize {
+    fn wait_any_available(&self) -> VkResult<usize> {
         unsafe {
             self.device
-                .wait_for_fences(&self.available, false, timeout_u64(None))
-                .unwrap();
+                .wait_for_fences(&self.available, false, timeout_u64(None))?;
         }
 
-        self.available
-            .iter()
-            .enumerate()
-            .find_map(|(idx, &fence)| unsafe {
-                self.device.get_fence_status(fence).unwrap().then_some(idx)
-            })
-            .unwrap()
+        for (idx, &fence) in self.available.iter().enumerate() {
+            if unsafe { self.device.get_fence_status(fence)? } {
+                return Ok(idx);
+            }
+        }
+
+        unreachable!("wait_for_fences returned without any fences signaled")
     }
 
     fn begin_buffer(&mut self, idx: usize) {
@@ -371,13 +376,22 @@ impl UploadPool {
     }
 
     /// Submits all scheduled upload operations for execution by the device.
-    pub fn submit(&mut self) {
+    pub fn submit(&mut self) -> VkResult<()> {
         let idx = self.current.take().unwrap();
         let buffer = &mut self.buffers[idx];
 
         if buffer.buffer_copies.is_empty() {
             // Nothing to do.
-            return;
+            return Ok(());
+        }
+
+        if !buffer.is_coherent {
+            self.device.allocator().flush_allocation(
+                &mut buffer.mem,
+                0,
+                // VMA will round this up the proper alignment if necessary.
+                buffer.cursor as u64,
+            )?;
         }
 
         // Prepare scratch space.
@@ -552,6 +566,8 @@ impl UploadPool {
                 },
             );
         }
+
+        Ok(())
     }
 
     /// Records a buffer copy operation, returning an upload key.
@@ -562,11 +578,11 @@ impl UploadPool {
         &mut self,
         src: &[u8],
         dst: BufferKey,
-    ) -> Result<(), CapacityError> {
+    ) -> Result<(), crate::Error> {
         let idx = match self.current {
             Some(i) => i,
             None => {
-                let i = self.wait_any_available();
+                let i = self.wait_any_available().map_err(crate::Error::Vulkan)?;
                 self.begin_buffer(i);
                 i
             }
@@ -594,8 +610,11 @@ impl UploadPool {
             offset: 0,
         };
 
-        // TODO(dp): this might also be an alignment error
-        let range_mut = unsafe { uploader.range_mut(layout, dst).ok_or(CapacityError)? };
+        let range_mut = unsafe {
+            uploader
+                .range_mut(layout, dst)
+                .ok_or(crate::Error::Capacity)?
+        };
         let buf_copy = range_mut.copy_from_slice(src);
         uploader.buffer_copies.push(buf_copy);
 

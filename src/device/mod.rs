@@ -12,9 +12,7 @@ use ash::{
     prelude::*,
     vk::{self, Handle},
 };
-use gpu_allocator::vulkan::{
-    Allocation as GpuAllocation, AllocationCreateDesc as GpuAllocationCreateDesc,
-};
+use vk_mem as vma;
 
 use crate::resource::buffer::{BufferInfo, BufferKey, BufferPool};
 
@@ -45,7 +43,8 @@ struct DeviceStorage {
     khr_swapchain: khr::swapchain::Device,
     ext_debug_utils: ext::debug_utils::Device,
 
-    allocator: Mutex<gpu_allocator::vulkan::Allocator>,
+    // Doesn't need a lock -- VMA locks internally.
+    allocator: vma::Allocator,
 
     // TODO(dp): I don't like this locking scheme.
     //
@@ -67,8 +66,8 @@ impl Device {
         self.storage().buffers.write().unwrap()
     }
 
-    pub fn allocate(&self, desc: &GpuAllocationCreateDesc) -> gpu_allocator::Result<GpuAllocation> {
-        self.storage().allocator.lock().unwrap().allocate(desc)
+    pub fn allocator(&self) -> &vma::Allocator {
+        &self.storage().allocator
     }
 
     #[allow(clippy::missing_safety_doc)]
@@ -145,15 +144,6 @@ impl Device {
         swapchain: vk::SwapchainKHR,
     ) -> VkResult<Vec<vk::Image>> {
         unsafe { self.storage().khr_swapchain.get_swapchain_images(swapchain) }
-    }
-
-    pub unsafe fn free(&self, allocation: GpuAllocation) {
-        self.storage()
-            .allocator
-            .lock()
-            .unwrap()
-            .free(allocation)
-            .expect("failed to free allocation");
     }
 
     #[tracing::instrument(name = "Device::queue_wait_idle", skip_all)]

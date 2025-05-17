@@ -1,43 +1,30 @@
-use ash::vk;
-use gpu_allocator::vulkan::{Allocation as GpuAllocation, AllocationCreateDesc, AllocationScheme};
+use ash::{prelude::VkResult, vk};
+use vk_mem::{self as vma, Alloc as _};
 
 use crate::Device;
 
 pub struct Image {
     pub(crate) info: ImageInfo,
     pub(crate) handle: vk::Image,
-    pub(crate) mem: GpuAllocation,
+    pub(crate) mem: vma::Allocation,
     pub(crate) default_view: vk::ImageView,
 }
 
 impl Image {
-    pub fn create(device: &Device, info: &ImageInfo) -> Self {
+    pub fn create(device: &Device, info: &ImageInfo) -> VkResult<Self> {
         let create_info: vk::ImageCreateInfo = info.into();
 
-        let image = unsafe {
-            device
-                .create_image(&create_info)
-                .expect("image creation failed")
+        let alloc_info = vma::AllocationCreateInfo {
+            flags: vma::AllocationCreateFlags::empty(),
+            usage: vma::MemoryUsage::Auto,
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            preferred_flags: vk::MemoryPropertyFlags::empty(),
+            memory_type_bits: u32::MAX,
+            user_data: 0,
+            priority: 0.5,
         };
 
-        let requirements = unsafe { device.get_image_memory_requirements(image) };
-
-        let alloc_desc = AllocationCreateDesc {
-            // TODO
-            name: "",
-            requirements,
-            location: gpu_allocator::MemoryLocation::GpuOnly,
-            linear: false,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        };
-
-        let mem = device.allocate(&alloc_desc).expect("allocation failed");
-
-        unsafe {
-            device
-                .bind_image_memory(image, mem.memory(), 0)
-                .expect("failed to bind image memory");
-        }
+        let (image, mem) = unsafe { device.allocator().create_image(&create_info, &alloc_info)? };
 
         let view_type = match info.extent {
             ImageExtent::D2(_) => vk::ImageViewType::TYPE_2D,
@@ -52,18 +39,14 @@ impl Image {
             .components(vk::ComponentMapping::default())
             .subresource_range(subresource_range_full(default_aspects));
 
-        let default_view = unsafe {
-            device
-                .create_image_view(&view_info)
-                .expect("failed to create default image view")
-        };
+        let default_view = unsafe { device.create_image_view(&view_info)? };
 
-        Image {
+        Ok(Image {
             info: info.clone(),
             handle: image,
             mem,
             default_view,
-        }
+        })
     }
 
     /// Destroys the image and frees its associated memory.
@@ -75,14 +58,13 @@ impl Image {
         let Image {
             info: _,
             handle,
-            mem,
+            mut mem,
             default_view,
         } = self;
 
         unsafe {
-            device.free(mem);
             device.destroy_image_view(default_view);
-            device.destroy_image(handle);
+            device.allocator().destroy_image(handle, &mut mem);
         }
     }
 }

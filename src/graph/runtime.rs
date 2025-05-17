@@ -83,11 +83,9 @@ impl Runtime {
 
             match self.image_bindings.get(img_key) {
                 ImageBinding::Transient => {
-                    let img = self.transient[self.transient_idx()].create(
-                        &self.device,
-                        img_key,
-                        &img_info,
-                    );
+                    let img = self.transient[self.transient_idx()]
+                        .create(&self.device, img_key, &img_info)
+                        .expect("failed to instantiate transient image");
 
                     let label = self.graph.inner.image_labels.get(img_key).unwrap();
 

@@ -1,6 +1,6 @@
 use std::collections::{hash_map, HashMap};
 
-use ash::vk;
+use ash::{prelude::*, vk};
 
 use crate::{
     graph::GraphImage,
@@ -45,18 +45,22 @@ impl TransientResources {
         device: &Device,
         image: GraphImage,
         info: &ImageInfo,
-    ) -> &'a Image {
+    ) -> VkResult<&'a Image> {
         match self.images.entry(image) {
             hash_map::Entry::Occupied(mut o) => {
                 if &o.get().info != info {
-                    let old_image = o.insert(Image::create(device, info));
+                    let old_image = o.insert(Image::create(device, info)?);
                     unsafe { old_image.destroy(device) };
                 }
 
-                &*o.into_mut()
+                Ok(&*o.into_mut())
             }
 
-            hash_map::Entry::Vacant(v) => v.insert(Image::create(device, info)),
+            hash_map::Entry::Vacant(v) => {
+                let image = Image::create(device, info)?;
+
+                Ok(v.insert(image))
+            }
         }
     }
 

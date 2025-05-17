@@ -10,9 +10,6 @@ members = ["examples"]
 ash = "0.38.0"
 bitflags = "2.9.0"
 bytemuck = { version = "1.16.0" }
-
-# TODO: replace with crates.io version when released
-gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator.git", rev = "2e2296e" }
 log = "0.4.27"
 naga = { version = "0.20.0" }
 raw-window-handle = "0.6.2"
@@ -25,7 +22,6 @@ vk-mem = "0.4.0"
 ash = { workspace = true }
 bitflags = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
-gpu-allocator = { workspace = true }
 log = { workspace = true }
 naga = { workspace = true, features = ["glsl-in", "spv-out", "spv-in"] }
 raw-window-handle = { workspace = true }

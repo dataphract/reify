@@ -4,6 +4,9 @@ pub enum Error {
     Bug,
     /// The container's capacity is exhausted.
     Capacity,
+    /// The device was lost.
+    DeviceLost,
     /// The operation timed out.
     TimedOut,
+    Vulkan(ash::vk::Result),
 }
