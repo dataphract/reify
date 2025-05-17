@@ -8,12 +8,14 @@ use std::{
 use ash::{ext, khr, prelude::VkResult, vk};
 use tracing_log::log;
 
+use crate::device::extensions::InstanceExtensionFlags;
+
 pub(crate) const LAYER_NAME_VALIDATION: &CStr = c"VK_LAYER_KHRONOS_validation";
 
 static INSTANCE: OnceLock<Instance> = OnceLock::new();
 static DEBUG_MESSENGER: OnceLock<DebugMessenger> = OnceLock::new();
 
-fn required_extensions() -> VkResult<Vec<&'static CStr>> {
+fn required_extensions() -> VkResult<InstanceExtensionFlags> {
     let entry = crate::entry();
     let instance_version = unsafe {
         entry
@@ -37,40 +39,31 @@ fn required_extensions() -> VkResult<Vec<&'static CStr>> {
     }
 
     log::info!("Vulkan instance version: {version_str}");
-    let instance_extensions = unsafe { entry.enumerate_instance_extension_properties(None)? };
+    let extension_props = unsafe { entry.enumerate_instance_extension_properties(None)? };
+    let available = InstanceExtensionFlags::detect(&extension_props);
 
-    let mut extensions = Vec::new();
+    let mut wanted = InstanceExtensionFlags::KHR_DISPLAY
+        | InstanceExtensionFlags::KHR_SURFACE
+        | InstanceExtensionFlags::EXT_DEBUG_UTILS;
 
-    extensions.push(khr::surface::NAME);
     if cfg!(all(
         unix,
         not(target_os = "android"),
         not(target_os = "macos")
     )) {
-        extensions.push(khr::wayland_surface::NAME);
-        extensions.push(khr::xcb_surface::NAME);
-        extensions.push(khr::xlib_surface::NAME);
+        wanted |= InstanceExtensionFlags::KHR_WAYLAND_SURFACE
+            | InstanceExtensionFlags::KHR_XCB_SURFACE
+            | InstanceExtensionFlags::KHR_XLIB_SURFACE;
     } else {
         unimplemented!("only tested on linux at the moment, sorry :(");
     }
 
-    extensions.push(ext::debug_utils::NAME);
-    extensions.push(khr::display::NAME);
+    let missing = wanted.difference(available);
+    for flag in missing.iter_ext_names() {
+        log::error!("missing required extension: {:?}", flag);
+    }
 
-    extensions.retain(|&wanted| {
-        for inst_ext in instance_extensions.iter() {
-            let name_bytes: &[u8] = bytemuck::cast_slice(&inst_ext.extension_name);
-            let name = CStr::from_bytes_until_nul(name_bytes).unwrap();
-            if wanted == name {
-                return true;
-            }
-        }
-
-        log::warn!("Extension not found: {}", wanted.to_string_lossy());
-        false
-    });
-
-    Ok(extensions)
+    Ok(wanted)
 }
 
 /// Lists the set of required layers.
@@ -100,24 +93,34 @@ fn required_layers() -> VkResult<Vec<&'static CStr>> {
 }
 
 pub struct Instance {
+    api_version: u32,
+
     instance: ash::Instance,
     khr_surface: khr::surface::Instance,
 
-    extensions: Vec<&'static CStr>,
+    extensions: InstanceExtensionFlags,
     _layers: Vec<&'static CStr>,
 }
 
 impl Instance {
+    #[inline]
+    pub fn version(&self) -> u32 {
+        self.api_version
+    }
+
+    #[inline]
     pub fn instance(&self) -> &ash::Instance {
         &self.instance
     }
 
+    #[inline]
     pub fn khr_surface(&self) -> &khr::surface::Instance {
         &self.khr_surface
     }
 
     pub fn has_wayland(&self) -> bool {
-        self.extensions.contains(&khr::wayland_surface::NAME)
+        self.extensions
+            .contains(InstanceExtensionFlags::KHR_WAYLAND_SURFACE)
     }
 }
 
@@ -134,18 +137,21 @@ fn create_instance() -> VkResult<Instance> {
             .try_enumerate_instance_version()?
             .unwrap_or(vk::API_VERSION_1_0)
     };
+
+    let api_version = cmp::min(vk::API_VERSION_1_3, driver_api_version);
+
     let app_info = vk::ApplicationInfo::default()
         .application_name(c"reify")
         .application_version(0)
         .engine_name(c"reify")
-        .api_version(cmp::min(vk::API_VERSION_1_3, driver_api_version));
+        .api_version(api_version);
 
     let extensions = required_extensions()?;
-    for ext in &extensions {
+    for ext in extensions.iter_ext_names() {
         log::info!("enabling extension {}", ext.to_string_lossy())
     }
     let ext_ptrs = extensions
-        .iter()
+        .iter_ext_names()
         .map(|ext| ext.as_ptr())
         .collect::<Vec<_>>();
     let layers = required_layers()?;
@@ -167,6 +173,7 @@ fn create_instance() -> VkResult<Instance> {
     });
 
     Ok(Instance {
+        api_version,
         khr_surface: khr::surface::Instance::new(entry, &instance),
         instance,
         extensions,
