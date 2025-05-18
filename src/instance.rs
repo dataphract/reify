@@ -50,9 +50,22 @@ fn required_extensions() -> VkResult<InstanceExtensionFlags> {
         not(target_os = "android"),
         not(target_os = "macos")
     )) {
-        wanted |= InstanceExtensionFlags::KHR_WAYLAND_SURFACE
+        let any_surface = InstanceExtensionFlags::KHR_WAYLAND_SURFACE
             | InstanceExtensionFlags::KHR_XCB_SURFACE
             | InstanceExtensionFlags::KHR_XLIB_SURFACE;
+
+        let available_surface = available & any_surface;
+
+        if available_surface.is_empty() {
+            log::error!("no supported surface extension");
+            for name in any_surface.iter_ext_names() {
+                log::error!("> missing {}", name.to_string_lossy());
+            }
+
+            panic!("no supported surface extension");
+        }
+
+        wanted |= available_surface;
     } else {
         unimplemented!("only tested on linux at the moment, sorry :(");
     }
@@ -117,9 +130,9 @@ impl Instance {
         &self.khr_surface
     }
 
-    pub fn has_wayland(&self) -> bool {
-        self.extensions
-            .contains(InstanceExtensionFlags::KHR_WAYLAND_SURFACE)
+    #[inline]
+    pub fn has_extensions(&self, flags: InstanceExtensionFlags) -> bool {
+        self.extensions.contains(flags)
     }
 }
 

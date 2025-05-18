@@ -1,6 +1,26 @@
+// Some notes on Vulkan's swapchain API:
+//
+// We need to ask the driver which image to use for the next frame. The driver does that by
+// returning the index of an image from acquire_next_image(). It also accepts a fence and a
+// semaphore which it will signal when the image is actually usable.
+//
+// The fence and semaphore we use to order our writes after the driver's prior reads can't be
+// associated with the swapchain image index because the driver needs to know the fence and
+// semaphore to signal at the time of the call, _before_ we know which index to use.
+//
+// However, the semaphore we use to order our writes before the driver's subsequent reads _does_
+// need to be associated with the image index. The spec requires that the semaphore is unsignaled
+// when we submit it to be signaled. That means the driver needs to have waited on it already, and
+// the driver has no way of telling us which semaphores it's waited on except to give us an
+// associated image index.
+//
+// This is addressed by VK_EXT_swapchain_maintenance1, which finally allows the driver to signal a
+// fence when it's done waiting on a semaphore. However, we can't rely on this extension being
+// available; at time of writing the coverage is ~60% on Linux and ~40% on Windows.
+
 use std::{cmp, marker::PhantomData};
 
-use ash::vk;
+use ash::{prelude::VkResult, vk};
 
 use crate::{
     frame::{FrameContext, FrameResources},
@@ -8,19 +28,65 @@ use crate::{
     Device,
 };
 
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
 /// A swapchain image, along with the resources used to render to it.
 pub struct SwapchainImage {
     pub(crate) index: u32,
     pub(crate) view: vk::ImageView,
     pub(crate) image: vk::Image,
+    pub(crate) present_wait: vk::Semaphore,
 
     unsync: PhantomUnSync,
     unsend: PhantomUnSend,
 }
 
 impl SwapchainImage {
+    fn create(device: &Device, info: &ImageInfo, image: vk::Image, index: usize) -> VkResult<Self> {
+        let view_info = vk::ImageViewCreateInfo::default()
+            .flags(vk::ImageViewCreateFlags::empty())
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(info.format)
+            .components(vk::ComponentMapping::default())
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+
+        let view;
+        let present_wait;
+        unsafe {
+            view = device.create_image_view(&view_info)?;
+
+            let sem_info = vk::SemaphoreCreateInfo::default();
+            present_wait = device.create_semaphore(&sem_info)?;
+
+            device.set_debug_utils_object_name_with(
+                image,
+                format_args!("swapchain.images[{index}].image"),
+            )?;
+            device.set_debug_utils_object_name_with(
+                view,
+                format_args!("swapchain.images[{index}].view"),
+            )?;
+            device.set_debug_utils_object_name_with(
+                present_wait,
+                format_args!("swapchain.images[{index}].present_wait"),
+            )?;
+        }
+
+        Ok(SwapchainImage {
+            index: index as u32,
+            image,
+            view,
+            present_wait,
+            unsend: PhantomData,
+            unsync: PhantomData,
+        })
+    }
+
     #[inline]
     pub fn view(&self) -> vk::ImageView {
         self.view
@@ -126,8 +192,8 @@ impl Display {
         };
 
         let min_image_count = {
-            // Try to keep an image free from the driver at all times.
-            let desired = surf_caps.min_image_count + 1;
+            // Try to triple buffer if possible.
+            let desired = cmp::max(surf_caps.min_image_count, 3);
 
             if surf_caps.max_image_count == 0 {
                 // No limit.
@@ -208,28 +274,6 @@ impl Display {
 
         log::info!("Retrieved {} images from swapchain.", images.len());
 
-        let view_info = |img| {
-            vk::ImageViewCreateInfo::default()
-                .flags(vk::ImageViewCreateFlags::empty())
-                .image(img)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(surface_format.format)
-                .components(vk::ComponentMapping::default())
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-        };
-
-        let image_views = images
-            .iter()
-            .map(|&img| unsafe { device.create_image_view(&view_info(img)) })
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
         let swapchain_image_info = ImageInfo {
             format: surface_format.format,
             extent: image_extent.into(),
@@ -240,15 +284,11 @@ impl Display {
         let swapchain_images = images
             .into_iter()
             .enumerate()
-            .zip(image_views)
-            .map(|((index, image), view)| SwapchainImage {
-                index: index as u32,
-                view,
-                image,
-                unsend: PhantomData,
-                unsync: PhantomData,
+            .map(|(index, image)| {
+                SwapchainImage::create(device, &swapchain_image_info, image, index)
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         self.info = Some(DisplayInfo {
             min_image_count,
@@ -257,11 +297,9 @@ impl Display {
             present_mode,
         });
 
-        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+        for _ in 0..swapchain_images.len() {
             self.frames.push(FrameResources::create(device));
         }
-
-        self._image_frames.resize(swapchain_images.len(), None);
 
         self.images = swapchain_images;
     }
@@ -270,10 +308,10 @@ impl Display {
         &'frame mut self,
         device: &Device,
     ) -> Result<FrameContext<'frame>, AcquireError<'frame>> {
-        let frame_idx = self.current_frame % MAX_FRAMES_IN_FLIGHT;
-        let frame = &mut self.frames[frame_idx];
         self.current_frame += 1;
 
+        let num_frames = self.frames.len();
+        let frame = &mut self.frames[self.current_frame % num_frames];
         let frame_cx = frame.acquire_context(device, None).unwrap();
 
         let acquire_info = vk::AcquireNextImageInfoKHR::default()

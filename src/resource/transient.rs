@@ -13,7 +13,7 @@ pub struct TransientResources {
     /// Indicates whether all prior accesses to the contained resources have completed.
     available: vk::Semaphore,
 
-    // TODO(dp): arena
+    // TODO(dp): pool, not hashmap, and store key in binding
     images: HashMap<GraphImage, Image>,
 }
 

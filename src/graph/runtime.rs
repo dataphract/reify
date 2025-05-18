@@ -83,7 +83,19 @@ impl Runtime {
 
             match self.image_bindings.get(img_key) {
                 ImageBinding::Transient => {
-                    self.transient[self.transient_idx()].create(&self.device, img_key, &img_info);
+                    let img = self.transient[self.transient_idx()].create(
+                        &self.device,
+                        img_key,
+                        &img_info,
+                    );
+
+                    let label = self.graph.inner.image_labels.get(img_key).unwrap();
+
+                    unsafe {
+                        self.device
+                            .set_debug_utils_object_name_with(img.handle, format_args!("{}", label))
+                            .unwrap()
+                    };
                 }
 
                 ImageBinding::Swapchain => (),
@@ -116,6 +128,10 @@ impl Runtime {
 
             // For image outputs that don't consume an image, transition from UNDEFINED layout.
             for out in node.outputs().images {
+                if out.consumed.is_some() {
+                    continue;
+                }
+
                 let img;
                 let range;
                 match self.image_bindings.get(out.image) {
@@ -131,19 +147,19 @@ impl Runtime {
                     }
                 }
 
-                if out.consumed.is_none() {
-                    image_barriers.push(
-                        vk::ImageMemoryBarrier2::default()
-                            .image(img)
-                            .src_stage_mask(vk::PipelineStageFlags2::empty())
-                            .dst_stage_mask(out.stage_mask)
-                            .src_access_mask(vk::AccessFlags2::empty())
-                            .dst_access_mask(out.access_mask)
-                            .old_layout(vk::ImageLayout::UNDEFINED)
-                            .new_layout(out.layout)
-                            .subresource_range(range),
-                    );
-                }
+                image_barriers.push(
+                    vk::ImageMemoryBarrier2::default()
+                        .image(img)
+                        // Don't reorder commands between frames.
+                        .src_stage_mask(out.stage_mask)
+                        .dst_stage_mask(out.stage_mask)
+                        // Don't reorder accesses between frames.
+                        .src_access_mask(out.access_mask)
+                        .dst_access_mask(out.access_mask)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .new_layout(out.layout)
+                        .subresource_range(range),
+                );
             }
 
             // Synchronize all resource dependencies.

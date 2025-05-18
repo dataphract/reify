@@ -23,6 +23,16 @@ pub struct FrameResources {
     /// the image can be safely used as an attachment.
     image_available: vk::Semaphore,
 
+    /// Indicates whether the driver is ready for a call to `vkQueuePresentKHR()`.
+    ///
+    /// Only usable if [`InstanceExtensionFlags::EXT_SWAPCHAIN_MAINTENANCE1`] is exposed by the
+    /// instance. The original swapchain extension has no explicit way to indicate to the
+    /// application that it has released the wait semaphores used by a previous call to
+    /// `vkQueuePresentKHR`. This extension allows the driver to signal a fence that informs the
+    /// application that it's safe to present.
+    // TODO: need to handle cases where this extension is missing.
+    // present_ready: Option<vk::Fence>,
+
     /// Indicates whether all commands submitted in the current frame have completed.
     ///
     /// The semaphore is unsignaled prior to queue submission, and signaled by the driver once all
@@ -242,7 +252,7 @@ impl<'frame> FrameContext<'frame> {
         }
 
         // Block rendering to the swapchain image until the driver is finished using it.
-        let wait_semaphores = &[vk::SemaphoreSubmitInfo::default()
+        let submit_wait_semaphores = &[vk::SemaphoreSubmitInfo::default()
             .semaphore(self.resources.image_available)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
 
@@ -250,11 +260,11 @@ impl<'frame> FrameContext<'frame> {
             &[vk::CommandBufferSubmitInfo::default().command_buffer(self.resources.commands)];
 
         let signal_semaphore_infos = &[vk::SemaphoreSubmitInfo::default()
-            .semaphore(self.resources.all_commands_complete)
+            .semaphore(self.attached.present_wait)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
 
         let submit_infos = &[vk::SubmitInfo2::default()
-            .wait_semaphore_infos(wait_semaphores)
+            .wait_semaphore_infos(submit_wait_semaphores)
             .command_buffer_infos(command_buffer_infos)
             .signal_semaphore_infos(signal_semaphore_infos)];
 
@@ -271,14 +281,12 @@ impl<'frame> FrameContext<'frame> {
                 .unwrap()
         };
 
-        let present_wait_semaphore = self.resources.all_commands_complete;
-
-        let wait_semaphores = &[present_wait_semaphore];
+        let present_wait_semaphores = &[self.attached.present_wait];
         let swapchains = &[self.swapchain];
         let image_indices = &[self.attached.index];
 
         let present_info = vk::PresentInfoKHR::default()
-            .wait_semaphores(wait_semaphores)
+            .wait_semaphores(present_wait_semaphores)
             .swapchains(swapchains)
             .image_indices(image_indices);
 

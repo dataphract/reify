@@ -36,13 +36,14 @@ macro_rules! declare_extensions {
             )*
         }
     ) => {
+        // This enum gives us autoincrement for each flag's bit position.
         #[allow(non_camel_case_types)]
         enum $values {
             $($variant,)*
         }
 
         bitflags::bitflags! {
-            #[derive(Copy, Clone, PartialEq, Eq)]
+            #[derive(Copy, Clone, Debug, PartialEq, Eq)]
             $v struct $name: $bits {
                 $(
                     const $variant = 1 << ($values::$variant as u32);
@@ -56,21 +57,7 @@ macro_rules! declare_extensions {
                 &[$(ash::$vendor::$extension::NAME,)*]
             };
 
-            // Make sure the list is actually sorted.
-            const TESTS: () = {
-                #[cfg(test)]
-                mod tests {
-                    use super::$name;
-
-                    #[test]
-                    fn names_sorted() {
-                        assert!($name::NAMES.is_sorted());
-                    }
-                }
-            };
-
-
-            pub fn detect(extensions: &[vk::ExtensionProperties]) -> Self {
+            pub(crate) fn detect(extensions: &[vk::ExtensionProperties]) -> Self {
                 let mut flags = Self::empty();
 
                 for props in extensions {

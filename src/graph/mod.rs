@@ -29,6 +29,7 @@ struct GraphInner {
     image_info: Arena<GraphImageInfo>,
     image_access: ArenaMap<GraphImage, ImageAccesses>,
     image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
+    image_labels: ArenaMap<GraphImage, String>,
 
     graph: DepGraph<GraphKey, NodeDependency>,
     graph_order: Vec<arena::Key<GraphKey>>,

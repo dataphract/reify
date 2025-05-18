@@ -22,7 +22,7 @@ pub struct GraphEditor {
     images: Arena<GraphImageInfo>,
     image_access: ArenaMap<GraphImage, ImageAccesses>,
     image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
-    image_labels: HashMap<String, GraphImage>,
+    image_labels: ArenaMap<GraphImage, String>,
 
     nodes: Arena<BoxNode>,
     node_labels: ArenaMap<GraphKey, String>,
@@ -61,6 +61,7 @@ impl GraphEditor {
                 image_info: self.images,
                 image_access: self.image_access,
                 image_usage: self.image_usage,
+                image_labels: self.image_labels,
                 graph,
                 graph_order,
                 nodes: self.nodes,
@@ -73,15 +74,7 @@ impl GraphEditor {
         let key = self.images.alloc(info);
         self.image_access.insert(key, ImageAccesses::default());
         self.image_usage.insert(key, vk::ImageUsageFlags::default());
-
-        match self.image_labels.entry(label) {
-            // TODO(dp): overwrite? definitely don't panic
-            Entry::Occupied(_) => panic!("duplicate label"),
-            Entry::Vacant(v) => {
-                v.insert(key);
-            }
-        }
-
+        self.image_labels.insert(key, label);
         key
     }
 

@@ -1,5 +1,6 @@
 use std::{
     ffi::CStr,
+    io::Write,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
         Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -171,12 +172,34 @@ impl Device {
             .object_name(name);
 
         unsafe {
-            DEVICE
-                .get()
-                .unwrap()
+            self.storage()
                 .ext_debug_utils
-                .set_debug_utils_object_name(&name_info)
+                .set_debug_utils_object_name(&name_info)?;
         }
+
+        Ok(())
+    }
+
+    /// Sets the debug label of a Vulkan object using a format string.
+    ///
+    /// This performs the string formatting internally using a fixed-size buffer on the stack.
+    pub unsafe fn set_debug_utils_object_name_with<'a, T: Handle>(
+        &self,
+        handle: T,
+        args: std::fmt::Arguments<'_>,
+    ) -> VkResult<()> {
+        let mut buf = std::io::Cursor::new([0u8; 64]);
+        buf.write_fmt(args).map_err(|_| vk::Result::INCOMPLETE)?;
+
+        // Truncate if the string fills the buffer.
+        let mut arr = buf.into_inner();
+        arr[arr.len() - 1] = 0;
+
+        let name = CStr::from_bytes_until_nul(&arr[..]).unwrap();
+
+        unsafe { self.set_debug_utils_object_name(handle, name)? };
+
+        Ok(())
     }
 
     #[inline]
