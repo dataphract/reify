@@ -4,8 +4,8 @@ use ash::vk;
 
 use crate::{
     graph::{
-        node::{NodeContext, NodeOutputs, OutputImage, OwnedNodeOutputs},
-        GraphImage, GraphKey, Node,
+        node::{NodeContext, NodeOutputs, OwnedNodeOutputs},
+        GraphImage, GraphKey, ImageAccess, Node, OutputImage,
     },
     Device, GraphEditor,
 };
@@ -60,24 +60,28 @@ where
 
         for att in self.slots.color_attachments.values() {
             outputs.images.push(OutputImage {
-                image: att.produce,
+                key: att.produce,
                 consumed: att.consume,
-                stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-                layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                access: ImageAccess {
+                    stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                    access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                },
                 usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
             });
         }
 
         if let Some(att) = &self.slots.depth_stencil_attachment {
             outputs.images.push(OutputImage {
-                image: att.produce,
+                key: att.produce,
                 consumed: att.consume,
-                stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
-                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-                access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
-                    | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                access: ImageAccess {
+                    stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                    access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
+                        | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                },
                 usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             });
         }

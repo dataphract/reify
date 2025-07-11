@@ -132,9 +132,9 @@ impl Runtime {
 
                 let img;
                 let range;
-                match self.image_bindings.get(out.image) {
+                match self.image_bindings.get(out.key) {
                     ImageBinding::Transient => {
-                        let storage = self.transient[self.transient_idx()].get(out.image);
+                        let storage = self.transient[self.transient_idx()].get(out.key);
                         img = storage.handle;
                         range = image::subresource_range_full(storage.info.format.aspects());
                     }
@@ -149,13 +149,13 @@ impl Runtime {
                     vk::ImageMemoryBarrier2::default()
                         .image(img)
                         // Don't reorder commands between frames.
-                        .src_stage_mask(out.stage_mask)
-                        .dst_stage_mask(out.stage_mask)
+                        .src_stage_mask(out.access.stage_mask)
+                        .dst_stage_mask(out.access.stage_mask)
                         // Don't reorder accesses between frames.
-                        .src_access_mask(out.access_mask)
-                        .dst_access_mask(out.access_mask)
+                        .src_access_mask(out.access.access_mask)
+                        .dst_access_mask(out.access.access_mask)
                         .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(out.layout)
+                        .new_layout(out.access.layout)
                         .subresource_range(range),
                 );
             }

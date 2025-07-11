@@ -6,7 +6,7 @@ use std::{
 use ash::vk;
 
 use crate::{
-    graph::{runtime::RunContext, GraphImage},
+    graph::{runtime::RunContext, GraphImage, InputImage, OutputImage},
     image::ImageInfo,
     Device, FrameContext,
 };
@@ -54,14 +54,6 @@ impl OwnedNodeInputs {
     }
 }
 
-pub struct InputImage {
-    pub resource: GraphImage,
-    pub stage_mask: vk::PipelineStageFlags2,
-    pub access_mask: vk::AccessFlags2,
-    pub layout: vk::ImageLayout,
-    pub usage: vk::ImageUsageFlags,
-}
-
 pub struct NodeOutputs<'node> {
     pub images: &'node [OutputImage],
 }
@@ -77,15 +69,6 @@ impl OwnedNodeOutputs {
             images: &self.images,
         }
     }
-}
-
-pub struct OutputImage {
-    pub image: GraphImage,
-    pub consumed: Option<GraphImage>,
-    pub stage_mask: vk::PipelineStageFlags2,
-    pub access_mask: vk::AccessFlags2,
-    pub layout: vk::ImageLayout,
-    pub usage: vk::ImageUsageFlags,
 }
 
 pub type BoxNode = Box<dyn Node>;

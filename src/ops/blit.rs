@@ -4,11 +4,8 @@ use ash::vk;
 
 use crate::{
     graph::{
-        node::{
-            InputImage, NodeContext, NodeInputs, NodeOutputs, OutputImage, OwnedNodeInputs,
-            OwnedNodeOutputs,
-        },
-        GraphImage, Node,
+        node::{NodeContext, NodeInputs, NodeOutputs, OwnedNodeInputs, OwnedNodeOutputs},
+        GraphImage, ImageAccess, InputImage, Node, OutputImage,
     },
     image::ImageExtent,
 };
@@ -44,21 +41,25 @@ impl BlitNode {
 
 fn input_image(img: GraphImage) -> InputImage {
     InputImage {
-        resource: img,
-        stage_mask: vk::PipelineStageFlags2::BLIT,
-        access_mask: vk::AccessFlags2::TRANSFER_READ,
-        layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        key: img,
+        access: ImageAccess {
+            stage_mask: vk::PipelineStageFlags2::BLIT,
+            access_mask: vk::AccessFlags2::TRANSFER_READ,
+            layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        },
         usage: vk::ImageUsageFlags::TRANSFER_SRC,
     }
 }
 
 fn output_image(img: GraphImage, consumed: Option<GraphImage>) -> OutputImage {
     OutputImage {
-        image: img,
+        key: img,
         consumed,
-        stage_mask: vk::PipelineStageFlags2::BLIT,
-        access_mask: vk::AccessFlags2::TRANSFER_WRITE,
-        layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        access: ImageAccess {
+            stage_mask: vk::PipelineStageFlags2::BLIT,
+            access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+            layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        },
         usage: vk::ImageUsageFlags::TRANSFER_DST,
     }
 }

@@ -1,8 +1,4 @@
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    mem,
-    sync::Arc,
-};
+use std::{collections::HashSet, mem, sync::Arc};
 
 use ash::vk;
 
@@ -10,11 +6,13 @@ use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     graph::{
-        BoxNode, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, ImageAccess,
-        ImageAccesses, Node, NodeDependency,
+        BoxNode, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, ImageAccesses, Node,
+        NodeDependency,
     },
     RenderPass, RenderPassBuilder,
 };
+
+use super::ImageOpAccess;
 
 // TODO(dp): maybe don't provide Default, since it guarantees implicit allocations?
 #[derive(Default)]
@@ -90,18 +88,16 @@ impl GraphEditor {
             let outputs = node.outputs();
 
             for input in inputs.images {
-                self.image_usage[input.resource] |= input.usage;
-                self.image_access[input.resource].add_reader(ImageAccess {
+                self.image_usage[input.key] |= input.usage;
+                self.image_access[input.key].add_reader(ImageOpAccess {
                     node_key,
-                    stage_mask: input.stage_mask,
-                    access_mask: input.access_mask,
-                    layout: input.layout,
+                    access: input.access,
                 });
             }
 
             for output in outputs.images {
                 // Update image usage.
-                self.image_usage[output.image] |= output.usage;
+                self.image_usage[output.key] |= output.usage;
 
                 // If this output consumes an image, mark the image as such.
                 if let Some(consumed) = output.consumed {
@@ -111,26 +107,22 @@ impl GraphEditor {
                         panic!("resource ({consumed:?}) consumer is already set");
                     }
 
-                    consumed_accesses.consumed_by = Some(ImageAccess {
+                    consumed_accesses.consumed_by = Some(ImageOpAccess {
                         node_key,
-                        stage_mask: output.stage_mask,
-                        access_mask: output.access_mask,
-                        layout: output.layout,
+                        access: output.access,
                     });
                 }
 
-                let produced = output.image;
+                let produced = output.key;
                 let produced_accesses = &mut self.image_access[produced];
 
                 if produced_accesses.produced_by.is_some() {
                     panic!("resource ({produced:?}) producer is already set");
                 }
 
-                produced_accesses.produced_by = Some(ImageAccess {
+                produced_accesses.produced_by = Some(ImageOpAccess {
                     node_key,
-                    stage_mask: output.stage_mask,
-                    access_mask: output.access_mask,
-                    layout: output.layout,
+                    access: output.access,
                 });
             }
 
@@ -190,7 +182,7 @@ impl<'a> GraphBuilder<'a> {
 
         // For each node input, add a dependency from this node to the producer of the input.
         for input in node.inputs().images {
-            let accesses = self.editor.image_access.get(input.resource).unwrap();
+            let accesses = self.editor.image_access.get(input.key).unwrap();
             let producer = &accesses.produced_by.expect("no producer for image");
 
             self.dependency_mut(next_depth, node_key, producer.node_key)
