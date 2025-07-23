@@ -195,11 +195,11 @@ impl BufferAccesses {
 
 /// A record of a single buffer access.
 #[derive(Copy, Clone, Debug, Default)]
-struct BufferAccess {
+pub struct BufferAccess {
     /// The stage in which the access occurs.
-    stage_mask: vk::PipelineStageFlags2,
+    pub stage_mask: vk::PipelineStageFlags2,
     /// The access type of the access.
-    access_mask: vk::AccessFlags2,
+    pub access_mask: vk::AccessFlags2,
 }
 
 struct ImageDependency {
@@ -321,32 +321,32 @@ struct Dependency {
 
 // Not intended to be part of the public API, just meant to cut down on code duplication. Buffers
 // and images are treated largely the same way, with image layout being the largest distinction.
-trait Resource {
+pub trait GraphResource {
     type Access: Copy + Clone + Default;
 
     type Usage: BitOrAssign + Copy + Default;
 }
 
-impl Resource for GraphBufferInfo {
+impl GraphResource for GraphBufferInfo {
     type Access = BufferAccess;
 
     type Usage = vk::BufferUsageFlags;
 }
 
-impl Resource for GraphImageInfo {
+impl GraphResource for GraphImageInfo {
     type Access = ImageAccess;
 
     type Usage = vk::ImageUsageFlags;
 }
 
-struct Resources<R: Resource> {
+struct Resources<R: GraphResource> {
     resources: Arena<R>,
     access: ArenaMap<arena::Key<R>, OpAccesses<R>>,
     usage: ArenaMap<arena::Key<R>, R::Usage>,
     labels: ArenaMap<arena::Key<R>, String>,
 }
 
-impl<R: Resource> Default for Resources<R> {
+impl<R: GraphResource> Default for Resources<R> {
     fn default() -> Self {
         Resources {
             resources: Arena::default(),
@@ -357,7 +357,7 @@ impl<R: Resource> Default for Resources<R> {
     }
 }
 
-impl<R: Resource> Resources<R> {
+impl<R: GraphResource> Resources<R> {
     fn len(&self) -> usize {
         self.resources.len()
     }
@@ -378,13 +378,13 @@ impl<R: Resource> Resources<R> {
     }
 }
 
-struct OpAccesses<R: Resource> {
+struct OpAccesses<R: GraphResource> {
     produced_by: Option<OpAccess<R>>,
     readers: Vec<OpAccess<R>>,
     consumed_by: Option<OpAccess<R>>,
 }
 
-impl<R: Resource> Default for OpAccesses<R> {
+impl<R: GraphResource> Default for OpAccesses<R> {
     fn default() -> Self {
         OpAccesses {
             produced_by: None,
@@ -394,7 +394,7 @@ impl<R: Resource> Default for OpAccesses<R> {
     }
 }
 
-impl<R: Resource> OpAccesses<R> {
+impl<R: GraphResource> OpAccesses<R> {
     fn set_producer(&mut self, node_key: GraphKey, access: R::Access) {
         assert!(self.produced_by.is_none());
 
@@ -416,7 +416,7 @@ pub type ImageOpAccess = OpAccess<GraphImageInfo>;
 pub type BufferOpAccess = OpAccess<GraphBufferInfo>;
 
 #[derive(Copy, Clone)]
-struct OpAccess<R: Resource> {
+struct OpAccess<R: GraphResource> {
     node_key: GraphKey,
     access: R::Access,
 }
@@ -424,7 +424,7 @@ struct OpAccess<R: Resource> {
 pub type InputBuffer = Input<GraphBufferInfo>;
 pub type InputImage = Input<GraphImageInfo>;
 
-pub struct Input<R: Resource> {
+pub struct Input<R: GraphResource> {
     pub key: arena::Key<R>,
     pub access: R::Access,
     pub usage: R::Usage,
@@ -433,15 +433,15 @@ pub struct Input<R: Resource> {
 pub type OutputBuffer = Output<GraphBufferInfo>;
 pub type OutputImage = Output<GraphImageInfo>;
 
-pub struct Output<R: Resource> {
+pub struct Output<R: GraphResource> {
     pub key: arena::Key<R>,
     pub consumed: Option<arena::Key<R>>,
     pub access: R::Access,
     pub usage: R::Usage,
 }
 
-impl<R: Resource> Copy for Output<R> {}
-impl<R: Resource> Clone for Output<R> {
+impl<R: GraphResource> Copy for Output<R> {}
+impl<R: GraphResource> Clone for Output<R> {
     fn clone(&self) -> Self {
         Self {
             key: self.key,
