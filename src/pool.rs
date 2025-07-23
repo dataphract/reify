@@ -99,31 +99,3 @@ impl<V> RawPool<V> {
         &mut self.values[index]
     }
 }
-
-pub struct Gen<T> {
-    value: T,
-    gen: u32,
-}
-
-impl<T> Gen<T> {
-    #[inline]
-    pub fn new(value: T) -> Gen<T> {
-        Gen { value, gen: 0 }
-    }
-
-    #[inline]
-    pub fn gen(&self) -> u32 {
-        self.gen
-    }
-
-    #[inline]
-    pub fn get(&self) -> &T {
-        &self.value
-    }
-
-    #[inline]
-    pub fn set(&mut self, value: T) -> T {
-        self.gen = self.gen.wrapping_add(1);
-        mem::replace(&mut self.value, value)
-    }
-}
