@@ -26,15 +26,15 @@ impl<T> Index<Key<T>> for Arena<T> {
     type Output = T;
 
     #[inline]
-    fn index(&self, index: Key<T>) -> &Self::Output {
-        &self.items[index.index]
+    fn index(&self, key: Key<T>) -> &Self::Output {
+        &self.items[key.index()]
     }
 }
 
 impl<T> IndexMut<Key<T>> for Arena<T> {
     #[inline]
-    fn index_mut(&mut self, index: Key<T>) -> &mut Self::Output {
-        &mut self.items[index.index]
+    fn index_mut(&mut self, key: Key<T>) -> &mut Self::Output {
+        &mut self.items[key.index()]
     }
 }
 
@@ -46,12 +46,12 @@ impl<T> Arena<T> {
 
     #[inline]
     pub fn get(&self, key: Key<T>) -> Option<&T> {
-        self.items.get(key.index)
+        self.items.get(key.index())
     }
 
     #[inline]
     pub fn _get_mut(&mut self, key: Key<T>) -> Option<&mut T> {
-        self.items.get_mut(key.index)
+        self.items.get_mut(key.index())
     }
 
     #[inline]
@@ -76,7 +76,7 @@ impl<T> Arena<T> {
     #[inline]
     fn next_key(&self) -> Key<T> {
         Key {
-            index: self.items.len(),
+            index: self.items.len().try_into().expect("length overflowed u32"),
             _phantom: PhantomData,
         }
     }
@@ -84,7 +84,7 @@ impl<T> Arena<T> {
     pub fn iter(&self) -> impl Iterator<Item = (Key<T>, &T)> {
         self.items.iter().enumerate().map(|(index, item)| {
             let key = Key {
-                index,
+                index: index as u32,
                 _phantom: PhantomData,
             };
 
@@ -94,8 +94,15 @@ impl<T> Arena<T> {
 }
 
 pub struct Key<T> {
-    index: usize,
+    index: u32,
     _phantom: PhantomData<fn() -> T>,
+}
+
+impl<T> Key<T> {
+    #[inline(always)]
+    fn index(self) -> usize {
+        self.index as usize
+    }
 }
 
 impl<T> Clone for Key<T> {
@@ -152,7 +159,7 @@ impl<T, V> Index<Key<T>> for ArenaMap<Key<T>, V> {
 
     #[inline]
     fn index(&self, index: Key<T>) -> &Self::Output {
-        self.items[index.index]
+        self.items[index.index()]
             .as_ref()
             .unwrap_or_else(|| panic!("no entry with key {index:?}"))
     }
@@ -161,7 +168,7 @@ impl<T, V> Index<Key<T>> for ArenaMap<Key<T>, V> {
 impl<T, V> IndexMut<Key<T>> for ArenaMap<Key<T>, V> {
     #[inline]
     fn index_mut(&mut self, index: Key<T>) -> &mut Self::Output {
-        self.items[index.index]
+        self.items[index.index()]
             .as_mut()
             .unwrap_or_else(|| panic!("no entry with key {index:?}"))
     }
@@ -178,32 +185,32 @@ impl<T, V> ArenaMap<Key<T>, V> {
     #[inline]
     fn grow(&mut self, key: Key<T>) {
         let min_len = key.index.checked_add(1).unwrap();
-        let new_len = cmp::max(self.items.len(), min_len);
+        let new_len = cmp::max(self.items.len(), min_len as usize);
         self.items.resize_with(new_len, || None);
     }
 
     #[inline]
     pub fn get(&self, key: Key<T>) -> Option<&V> {
-        self.items.get(key.index)?.as_ref()
+        self.items.get(key.index())?.as_ref()
     }
 
     #[inline]
     pub fn _get_mut(&mut self, key: Key<T>) -> Option<&mut V> {
-        self.items.get_mut(key.index)?.as_mut()
+        self.items.get_mut(key.index())?.as_mut()
     }
 
     #[inline]
     pub fn insert(&mut self, key: Key<T>, value: V) -> Option<V> {
         self.grow(key);
 
-        self.items[key.index].replace(value)
+        self.items[key.index()].replace(value)
     }
 
     #[inline]
     pub fn entry(&mut self, key: Key<T>) -> Entry<Key<T>, V> {
         self.grow(key);
 
-        match self.items[key.index] {
+        match self.items[key.index()] {
             Some(_) => Entry::Occupied(OccupiedEntry { map: self, key }),
             None => Entry::Vacant(VacantEntry { map: self, key }),
         }
@@ -214,7 +221,7 @@ impl<T, V> ArenaMap<Key<T>, V> {
             let value = value.as_ref()?;
 
             let key = Key {
-                index,
+                index: index as u32,
                 _phantom: PhantomData,
             };
 
@@ -235,7 +242,7 @@ impl<'a, T, V> Entry<'a, Key<T>, V> {
         F: FnOnce() -> V,
     {
         match self {
-            Entry::Occupied(o) => o.map.items[o.key.index].as_mut().unwrap(),
+            Entry::Occupied(o) => o.map.items[o.key.index()].as_mut().unwrap(),
             Entry::Vacant(v) => v.insert_with(f),
         }
     }
@@ -257,6 +264,6 @@ impl<'a, T, V> VacantEntry<'a, Key<T>, V> {
     where
         F: FnOnce() -> V,
     {
-        self.map.items[self.key.index].insert(f())
+        self.map.items[self.key.index()].insert(f())
     }
 }
