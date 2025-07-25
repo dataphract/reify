@@ -13,7 +13,7 @@ use ash::{prelude::VkResult, vk};
 use vk_mem::{self as vma, Alloc as _};
 
 use crate::{
-    buffer::{BufferKey, BufferSyncState},
+    buffer::{Buffer, BufferSyncState},
     device::{OwnerId, SubmissionId},
     misc::timeout_u64,
     Device,
@@ -23,7 +23,7 @@ const INIT_COPY_OP_CAPACITY: usize = 64;
 
 pub struct UploadDst {
     handle: vk::Buffer,
-    key: BufferKey,
+    key: Buffer,
     offset: u64,
 }
 
@@ -64,7 +64,7 @@ pub(crate) struct UploadBuffer {
     // When an upload to a buffer is scheduled, the upload pool takes ownership of the destination
     // buffer, and its initial sync state is stored here. When all scheduled uploads to that buffer
     // are submitted, the entry is removed, and ownership is released.
-    buffer_ownership: HashMap<BufferKey, BufferSyncState>,
+    buffer_ownership: HashMap<Buffer, BufferSyncState>,
 
     // Command pool backing `cmd_buf`.
     cmd_pool: vk::CommandPool,
@@ -216,7 +216,7 @@ impl UploadBuffer {
         })
     }
 
-    fn prepare_owned_buffer(&mut self, buffer: BufferKey, init_state: BufferSyncState) {
+    fn prepare_owned_buffer(&mut self, buffer: Buffer, init_state: BufferSyncState) {
         match self.buffer_ownership.entry(buffer) {
             hash_map::Entry::Occupied(o) => {
                 debug_assert_eq!(o.get(), &init_state);
@@ -232,7 +232,7 @@ impl UploadBuffer {
 /// Description of a scheduled buffer copy operation.
 struct BufferCopy {
     /// Key of the destination buffer.
-    dst_key: BufferKey,
+    dst_key: Buffer,
     /// Handle to the destination buffer.
     dst_handle: vk::Buffer,
 
@@ -247,7 +247,7 @@ struct BufferCopy {
 impl BufferCopy {
     fn batch_order(&self, other: &Self) -> cmp::Ordering {
         // Compare key first, then destination offset.
-        BufferKey::batch_order(self.dst_key, other.dst_key)
+        Buffer::batch_order(self.dst_key, other.dst_key)
             .then(self.dst_offset.cmp(&other.dst_offset))
     }
 }
@@ -577,7 +577,7 @@ impl UploadPool {
     pub unsafe fn copy_bytes_to_buffer(
         &mut self,
         src: &[u8],
-        dst: BufferKey,
+        dst: Buffer,
     ) -> Result<(), crate::Error> {
         let idx = match self.current {
             Some(i) => i,

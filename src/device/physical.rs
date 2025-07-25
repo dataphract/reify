@@ -7,11 +7,11 @@ use ash::{ext, khr, vk};
 use vk_mem as vma;
 
 use crate::{
-    buffer::BufferPool,
     device::{
         extensions::DeviceExtensionFlags, Device, DeviceStorage, Queue, QueueFamily, QueueStorage,
         DEVICE,
     },
+    resource::ResourcePool,
 };
 
 pub struct _PhysicalDeviceProperties {
@@ -193,7 +193,7 @@ impl PhysicalDevice {
         let queues = vec![unsafe { QueueStorage::create(&device, queue) }];
 
         // TODO: custom capacity
-        let buffers = RwLock::new(BufferPool::with_capacity(65536));
+        let buffers = RwLock::new(ResourcePool::with_capacity(65536));
 
         let res = DEVICE.set(DeviceStorage {
             phys_device: self.clone(),

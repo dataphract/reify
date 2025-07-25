@@ -14,7 +14,10 @@ use ash::{
 };
 use vk_mem as vma;
 
-use crate::resource::buffer::{BufferInfo, BufferKey, BufferPool};
+use crate::resource::{
+    buffer::{Buffer, BufferInfo},
+    ResourcePool,
+};
 
 pub(crate) mod extensions;
 
@@ -50,7 +53,7 @@ struct DeviceStorage {
     //
     // Ideally, there should be a batch interface for ownership transfer, and retrieving data about
     // a resource you already own shouldn't involve any lock contention.
-    buffers: RwLock<BufferPool>,
+    buffers: RwLock<ResourcePool<Buffer>>,
 }
 
 impl Device {
@@ -58,11 +61,11 @@ impl Device {
         &self.storage().ash
     }
 
-    pub(crate) fn buffers(&self) -> RwLockReadGuard<'_, BufferPool> {
+    pub(crate) fn buffers(&self) -> RwLockReadGuard<'_, ResourcePool<Buffer>> {
         self.storage().buffers.read().unwrap()
     }
 
-    pub(crate) fn buffers_mut(&mut self) -> RwLockWriteGuard<'_, BufferPool> {
+    pub(crate) fn buffers_mut(&mut self) -> RwLockWriteGuard<'_, ResourcePool<Buffer>> {
         self.storage().buffers.write().unwrap()
     }
 
@@ -99,7 +102,7 @@ impl Device {
             .cmd_end_debug_utils_label(command_buffer)
     }
 
-    pub fn create_buffer(&self, info: BufferInfo) -> Option<BufferKey> {
+    pub fn create_buffer(&self, info: BufferInfo) -> Option<Buffer> {
         self.storage().buffers.write().unwrap().create(self, info)
     }
 
