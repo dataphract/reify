@@ -26,11 +26,7 @@ pub struct Graph {
 struct GraphInner {
     swapchain_image: GraphImage,
 
-    // TODO(dp): consolidate?
-    image_info: Arena<GraphImageInfo>,
-    image_access: ArenaMap<GraphImage, ImageAccesses>,
-    image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
-    image_labels: ArenaMap<GraphImage, String>,
+    images: Resources<GraphImageInfo>,
 
     graph: DepGraph<GraphKey, NodeDependency>,
     graph_order: Vec<arena::Key<GraphKey>>,
@@ -47,7 +43,11 @@ impl Graph {
 
     #[inline]
     pub fn num_images(&self) -> usize {
-        self.inner.image_info.len()
+        self.inner.images.len()
+    }
+
+    pub fn image_access(&self, key: GraphImage) -> &OpAccesses<GraphImageInfo> {
+        self.inner.images.access.get(key).unwrap()
     }
 
     fn node_dependencies(
@@ -180,17 +180,13 @@ struct BufferDependency {
     dst_access_mask: vk::AccessFlags2,
 }
 
-#[derive(Debug, Default)]
-struct BufferAccesses {
-    produced_by: Option<BufferAccess>,
-    read_by: Vec<BufferAccess>,
-    consumed_by: Option<BufferAccess>,
-}
-
-impl BufferAccesses {
-    fn add_reader(&mut self, access: BufferAccess) {
-        self.read_by.push(access);
-    }
+struct Accesses<T>
+where
+    T: GraphResource,
+{
+    produced_by: Option<OpAccesses<T>>,
+    read_by: Vec<OpAccesses<T>>,
+    consumed_by: Option<OpAccesses<T>>,
 }
 
 /// A record of a single buffer access.
@@ -357,7 +353,14 @@ impl<R: GraphResource> Default for Resources<R> {
     }
 }
 
-impl<R: GraphResource> Resources<R> {
+impl<R> Resources<R>
+where
+    R: GraphResource,
+{
+    fn iter(&self) -> impl Iterator<Item = (arena::Key<R>, &R)> + '_ {
+        self.resources.iter()
+    }
+
     fn len(&self) -> usize {
         self.resources.len()
     }

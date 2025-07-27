@@ -1,26 +1,20 @@
 use std::{collections::HashSet, mem, sync::Arc};
 
-use ash::vk;
-
 use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     graph::{
-        BoxNode, Graph, GraphImage, GraphImageInfo, GraphInner, GraphKey, ImageAccesses, Node,
-        NodeDependency,
+        BoxNode, Graph, GraphBufferInfo, GraphImage, GraphImageInfo, GraphInner, GraphKey,
+        ImageOpAccess, Node, NodeDependency, Resources,
     },
     RenderPass, RenderPassBuilder,
 };
 
-use super::ImageOpAccess;
-
 // TODO(dp): maybe don't provide Default, since it guarantees implicit allocations?
 #[derive(Default)]
 pub struct GraphEditor {
-    images: Arena<GraphImageInfo>,
-    image_access: ArenaMap<GraphImage, ImageAccesses>,
-    image_usage: ArenaMap<GraphImage, vk::ImageUsageFlags>,
-    image_labels: ArenaMap<GraphImage, String>,
+    buffers: Resources<GraphBufferInfo>,
+    images: Resources<GraphImageInfo>,
 
     nodes: Arena<BoxNode>,
     node_labels: ArenaMap<GraphKey, String>,
@@ -33,7 +27,8 @@ impl GraphEditor {
 
     pub fn build(self, final_image: GraphImage) -> Graph {
         let final_node = self
-            .image_access
+            .images
+            .access
             .get(final_image)
             .unwrap()
             .produced_by
@@ -56,10 +51,7 @@ impl GraphEditor {
         Graph {
             inner: Arc::new(GraphInner {
                 swapchain_image: final_image,
-                image_info: self.images,
-                image_access: self.image_access,
-                image_usage: self.image_usage,
-                image_labels: self.image_labels,
+                images: self.images,
                 graph,
                 graph_order,
                 nodes: self.nodes,
@@ -68,12 +60,9 @@ impl GraphEditor {
         }
     }
 
+    #[inline]
     pub fn add_image(&mut self, label: String, info: GraphImageInfo) -> GraphImage {
-        let key = self.images.alloc(info);
-        self.image_access.insert(key, ImageAccesses::default());
-        self.image_usage.insert(key, vk::ImageUsageFlags::default());
-        self.image_labels.insert(key, label);
-        key
+        self.images.add_resource(label, info)
     }
 
     #[inline]
@@ -88,20 +77,17 @@ impl GraphEditor {
             let outputs = node.outputs();
 
             for input in inputs.images {
-                self.image_usage[input.key] |= input.usage;
-                self.image_access[input.key].add_reader(ImageOpAccess {
-                    node_key,
-                    access: input.access,
-                });
+                self.images.add_usage(input.key, input.usage);
+                self.images.access[input.key].add_reader(node_key, input.access);
             }
 
             for output in outputs.images {
                 // Update image usage.
-                self.image_usage[output.key] |= output.usage;
+                self.images.add_usage(output.key, output.usage);
 
                 // If this output consumes an image, mark the image as such.
                 if let Some(consumed) = output.consumed {
-                    let consumed_accesses = &mut self.image_access[consumed];
+                    let consumed_accesses = &mut self.images.access[consumed];
 
                     if consumed_accesses.consumed_by.is_some() {
                         panic!("resource ({consumed:?}) consumer is already set");
@@ -114,7 +100,7 @@ impl GraphEditor {
                 }
 
                 let produced = output.key;
-                let produced_accesses = &mut self.image_access[produced];
+                let produced_accesses = &mut self.images.access[produced];
 
                 if produced_accesses.produced_by.is_some() {
                     panic!("resource ({produced:?}) producer is already set");
@@ -182,7 +168,7 @@ impl<'a> GraphBuilder<'a> {
 
         // For each node input, add a dependency from this node to the producer of the input.
         for input in node.inputs().images {
-            let accesses = self.editor.image_access.get(input.key).unwrap();
+            let accesses = self.editor.images.access.get(input.key).unwrap();
             let producer = &accesses.produced_by.expect("no producer for image");
 
             self.dependency_mut(next_depth, node_key, producer.node_key)
@@ -195,10 +181,10 @@ impl<'a> GraphBuilder<'a> {
                 continue;
             };
 
-            let consumed_accesses = self.editor.image_access.get(consumed).unwrap();
+            let consumed_accesses = self.editor.images.access.get(consumed).unwrap();
 
             // If the consumed image has no readers, add a direct dependency on the image producer.
-            if consumed_accesses.read_by.is_empty() {
+            if consumed_accesses.readers.is_empty() {
                 let producer = consumed_accesses.produced_by.unwrap();
                 self.dependency_mut(next_depth, node_key, producer.node_key)
                     .add_image_write_after_write(output, &producer);
@@ -207,7 +193,7 @@ impl<'a> GraphBuilder<'a> {
             }
 
             // Otherwise, add a dependency on each reader.
-            for reader in &consumed_accesses.read_by {
+            for reader in &consumed_accesses.readers {
                 self.dependency_mut(next_depth, node_key, reader.node_key)
                     .add_image_write_after_read(output, reader);
             }

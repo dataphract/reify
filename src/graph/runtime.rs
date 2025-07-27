@@ -37,16 +37,16 @@ impl Runtime {
         let transient =
             [(); TRANSIENT_RESOURCE_INSTANCES].map(|_| TransientResources::new(&device));
 
-        let mut bindings = ImageBindings::with_capacity(graph.num_images());
+        let mut image_bindings = ImageBindings::with_capacity(graph.num_images());
 
-        bindings.set(graph.swapchain_image(), ImageBinding::Swapchain);
+        image_bindings.set(graph.swapchain_image(), ImageBinding::Swapchain);
 
         Runtime {
             device,
             graph,
             frame_counter: 0,
             num_active_debug_spans: 0,
-            image_bindings: bindings,
+            image_bindings,
             transient,
         }
     }
@@ -64,21 +64,20 @@ impl Runtime {
     pub fn swapchain_image_layout(&self) -> vk::ImageLayout {
         let key = self.graph.swapchain_image();
         self.graph
-            .inner
-            .image_access
-            .get(key)
+            .image_access(key)
+            .produced_by
+            .map(|acc| acc.access.layout)
             .unwrap()
-            .produced_layout()
     }
 
     #[tracing::instrument(skip_all)]
     fn resolve_resources(&mut self) {
-        for (img_key, graph_img_info) in self.graph.inner.image_info.iter() {
+        for (img_key, graph_img_info) in self.graph.inner.images.iter() {
             let img_info = ImageInfo {
                 format: graph_img_info.format,
                 extent: graph_img_info.extent.into(),
                 tiling: ImageTiling::Optimal,
-                usage: self.graph.inner.image_usage.get(img_key).cloned().unwrap(),
+                usage: self.graph.inner.images.usage.get(img_key).cloned().unwrap(),
             };
 
             match self.image_bindings.get(img_key) {
@@ -87,7 +86,7 @@ impl Runtime {
                         .create(&self.device, img_key, &img_info)
                         .expect("failed to instantiate transient image");
 
-                    let label = self.graph.inner.image_labels.get(img_key).unwrap();
+                    let label = self.graph.inner.images.labels.get(img_key).unwrap();
 
                     unsafe {
                         self.device
