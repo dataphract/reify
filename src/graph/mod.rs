@@ -4,6 +4,7 @@ use std::{
 };
 
 use ash::vk;
+use runtime::ImageBinding;
 
 use crate::{
     arena::{self, Arena, ArenaMap},
@@ -320,17 +321,23 @@ struct Dependency {
 pub trait GraphResource {
     type Access: Copy + Clone + Default;
 
+    type Binding: Copy + Default;
+
     type Usage: BitOrAssign + Copy + Default;
 }
 
 impl GraphResource for GraphBufferInfo {
     type Access = BufferAccess;
 
+    type Binding = ();
+
     type Usage = vk::BufferUsageFlags;
 }
 
 impl GraphResource for GraphImageInfo {
     type Access = ImageAccess;
+
+    type Binding = ImageBinding;
 
     type Usage = vk::ImageUsageFlags;
 }

@@ -3,13 +3,15 @@ use std::ffi::CStr;
 use ash::vk;
 
 use crate::{
-    arena::ArenaMap,
-    graph::{node::NodeContext, Graph, GraphImage},
+    arena::{self, ArenaMap},
+    graph::{node::NodeContext, Graph, GraphImage, GraphImageInfo},
     image::{self, FormatExt, ImageInfo, ImageTiling},
     misc::IMAGE_SUBRESOURCE_RANGE_FULL_COLOR,
     transient::TransientResources,
     Device, FrameContext,
 };
+
+use super::GraphResource;
 
 // TODO(dp): make configurable
 const TRANSIENT_RESOURCE_INSTANCES: usize = 2;
@@ -267,22 +269,30 @@ impl<'run> RunContext<'run> {
     }
 }
 
-pub struct ImageBindings {
-    bindings: ArenaMap<GraphImage, ImageBinding>,
+type ImageBindings = Bindings<GraphImageInfo>;
+
+pub struct Bindings<T>
+where
+    T: GraphResource,
+{
+    bindings: ArenaMap<arena::Key<T>, T::Binding>,
 }
 
-impl ImageBindings {
+impl<T> Bindings<T>
+where
+    T: GraphResource,
+{
     fn with_capacity(cap: usize) -> Self {
-        ImageBindings {
+        Bindings {
             bindings: ArenaMap::with_capacity(cap),
         }
     }
 
-    fn get(&self, image: GraphImage) -> ImageBinding {
+    fn get(&self, image: arena::Key<T>) -> T::Binding {
         self.bindings.get(image).copied().unwrap_or_default()
     }
 
-    fn set(&mut self, image: GraphImage, binding: ImageBinding) {
+    fn set(&mut self, image: arena::Key<T>, binding: T::Binding) {
         let _ = self.bindings.insert(image, binding);
     }
 }
