@@ -4,8 +4,8 @@ use crate::{
     arena::{self, Arena, ArenaMap},
     depgraph::DepGraph,
     graph::{
-        BoxNode, Graph, GraphBufferInfo, GraphImage, GraphImageInfo, GraphInner, GraphKey,
-        ImageOpAccess, Node, NodeDependency, Resources,
+        BoxNode, Graph, GraphBuffer, GraphBufferInfo, GraphImage, GraphImageInfo, GraphInner,
+        GraphKey, ImageOpAccess, Node, NodeDependency, Resources,
     },
     RenderPass, RenderPassBuilder,
 };
@@ -51,6 +51,7 @@ impl GraphEditor {
         Graph {
             inner: Arc::new(GraphInner {
                 swapchain_image: final_image,
+                buffers: self.buffers,
                 images: self.images,
                 graph,
                 graph_order,
@@ -58,6 +59,11 @@ impl GraphEditor {
                 node_labels: self.node_labels,
             }),
         }
+    }
+
+    #[inline]
+    pub fn add_buffer(&mut self, label: String, info: GraphBufferInfo) -> GraphBuffer {
+        self.buffers.add_resource(label, info)
     }
 
     #[inline]

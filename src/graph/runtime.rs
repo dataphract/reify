@@ -4,14 +4,12 @@ use ash::vk;
 
 use crate::{
     arena::{self, ArenaMap},
-    graph::{node::NodeContext, Graph, GraphImage, GraphImageInfo},
+    graph::{node::NodeContext, Graph, GraphImage, GraphImageInfo, GraphResource},
     image::{self, FormatExt, ImageInfo, ImageTiling},
     misc::IMAGE_SUBRESOURCE_RANGE_FULL_COLOR,
     transient::TransientResources,
     Device, FrameContext,
 };
-
-use super::GraphResource;
 
 // TODO(dp): make configurable
 const TRANSIENT_RESOURCE_INSTANCES: usize = 2;
@@ -295,6 +293,12 @@ where
     fn set(&mut self, image: arena::Key<T>, binding: T::Binding) {
         let _ = self.bindings.insert(image, binding);
     }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub enum BufferBinding {
+    #[default]
+    Transient,
 }
 
 /// A logical binding for a graph image.

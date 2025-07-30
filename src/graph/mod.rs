@@ -4,7 +4,7 @@ use std::{
 };
 
 use ash::vk;
-use runtime::ImageBinding;
+use runtime::{BufferBinding, ImageBinding};
 
 use crate::{
     arena::{self, Arena, ArenaMap},
@@ -27,6 +27,7 @@ pub struct Graph {
 struct GraphInner {
     swapchain_image: GraphImage,
 
+    buffers: Resources<GraphBufferInfo>,
     images: Resources<GraphImageInfo>,
 
     graph: DepGraph<GraphKey, NodeDependency>,
@@ -329,7 +330,7 @@ pub trait GraphResource {
 impl GraphResource for GraphBufferInfo {
     type Access = BufferAccess;
 
-    type Binding = ();
+    type Binding = BufferBinding;
 
     type Usage = vk::BufferUsageFlags;
 }
